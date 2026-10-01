@@ -1,0 +1,309 @@
+{
+  "format": "oto-atari.mapping",
+  "version": 1,
+  "name": "lights-default",
+  "description": "照明向け。連続量は wash（面明かり）、拍は pulse、キックは low の splat、落としで strobe。色数を絞る。",
+  "limits": {
+    "maxPerSec": 12
+  },
+  "palettes": {
+    "warm": {
+      "surface": "#0b0b0d",
+      "sub": "#d9483b",
+      "bass": "#ffd27a",
+      "lowmid": "#f2ead6",
+      "mid": "#f2ead6",
+      "high": "#7ab8ff",
+      "air": "#9ff3ff",
+      "accent": "#ffffff"
+    },
+    "cold": {
+      "surface": "#0b0b0d",
+      "sub": "#3a2a6a",
+      "bass": "#7ab8ff",
+      "lowmid": "#9b6fd0",
+      "mid": "#f2ead6",
+      "high": "#68d391",
+      "air": "#ffffff",
+      "accent": "#ffffff"
+    }
+  },
+  "startPalette": "warm",
+  "rules": [
+    {
+      "id": "kick-low",
+      "on": {
+        "event": "onset",
+        "band": [
+          "sub",
+          "bass"
+        ],
+        "minStrength": 0.4
+      },
+      "quantize": {
+        "to": "half",
+        "maxShiftSec": 0.08
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "low",
+        "color": "@palette.bass",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.4,
+            1.0
+          ]
+        },
+        "weight": 0.9,
+        "decaySec": 0.5
+      }
+    },
+    {
+      "id": "snare-high",
+      "on": {
+        "event": "onset",
+        "tags": [
+          "snare"
+        ],
+        "minStrength": 0.4
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "high",
+        "color": "@palette.high",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.3,
+            0.8
+          ]
+        },
+        "weight": 0.3,
+        "decaySec": 0.35
+      }
+    },
+    {
+      "id": "downbeat-pulse",
+      "on": {
+        "event": "downbeat",
+        "minConfidence": 0.2
+      },
+      "emit": {
+        "intent": "pulse",
+        "zone": "mid",
+        "color": "@palette.mid",
+        "level": {
+          "from": "strength",
+          "range": [
+            0.3,
+            0.7
+          ]
+        },
+        "decaySec": 0.5
+      }
+    },
+    {
+      "id": "beat-pulse",
+      "on": {
+        "event": "beat",
+        "beatInBar": [
+          1,
+          2,
+          3
+        ]
+      },
+      "emit": {
+        "intent": "pulse",
+        "zone": "mid",
+        "color": "@palette.mid",
+        "level": {
+          "from": "strength",
+          "range": [
+            0.1,
+            0.35
+          ]
+        },
+        "decaySec": 0.3
+      }
+    },
+    {
+      "id": "mid-wash",
+      "on": {
+        "curve": "band.mid"
+      },
+      "emit": {
+        "intent": "wash",
+        "zone": "mid",
+        "color": "@palette.mid",
+        "level": {
+          "from": "value",
+          "domain": [
+            0.3,
+            1
+          ],
+          "range": [
+            0.1,
+            0.8
+          ],
+          "smooth": {
+            "attackSec": 0.08,
+            "releaseSec": 0.8
+          }
+        }
+      }
+    },
+    {
+      "id": "air-wash",
+      "on": {
+        "curve": "band.air"
+      },
+      "emit": {
+        "intent": "wash",
+        "zone": "air",
+        "color": "@palette.air",
+        "level": {
+          "from": "value",
+          "domain": [
+            0.35,
+            1
+          ],
+          "range": [
+            0,
+            0.6
+          ],
+          "smooth": {
+            "attackSec": 0.05,
+            "releaseSec": 0.6
+          }
+        }
+      }
+    },
+    {
+      "id": "floor-wash",
+      "on": {
+        "curve": "band.sub"
+      },
+      "emit": {
+        "intent": "wash",
+        "zone": "floor",
+        "color": "@palette.sub",
+        "level": {
+          "from": "value",
+          "domain": [
+            0.4,
+            1
+          ],
+          "range": [
+            0,
+            0.7
+          ],
+          "smooth": {
+            "attackSec": 0.05,
+            "releaseSec": 0.4
+          }
+        }
+      }
+    },
+    {
+      "id": "drop-strobe",
+      "on": {
+        "event": "drop",
+        "minStrength": 0.5
+      },
+      "emit": {
+        "intent": "strobe",
+        "zone": "high",
+        "color": "#ffffff",
+        "hz": 8,
+        "duty": 0.5,
+        "dur": 1.0
+      }
+    },
+    {
+      "id": "build-sweep",
+      "on": {
+        "event": "build",
+        "minStrength": 0.2
+      },
+      "emit": {
+        "intent": "sweep",
+        "zone": "low",
+        "toZone": "air",
+        "color": "@palette.high",
+        "dur": {
+          "from": "dur",
+          "domain": [
+            0,
+            8
+          ],
+          "range": [
+            1,
+            8
+          ]
+        },
+        "width": 0.3
+      }
+    },
+    {
+      "id": "silence-blackout",
+      "on": {
+        "event": "silence"
+      },
+      "emit": {
+        "intent": "blackout",
+        "dur": {
+          "from": "dur",
+          "domain": [
+            0,
+            4
+          ],
+          "range": [
+            0.4,
+            4
+          ]
+        },
+        "fadeSec": 0.2
+      }
+    },
+    {
+      "id": "section-palette",
+      "on": {
+        "event": "sectionChange",
+        "minStrength": 0.2
+      },
+      "emit": {
+        "intent": "palette",
+        "cycle": [
+          "cold",
+          "warm"
+        ]
+      }
+    },
+    {
+      "id": "haze",
+      "on": {
+        "curve": "loudness"
+      },
+      "emit": {
+        "intent": "haze",
+        "zone": "all",
+        "level": {
+          "from": "value",
+          "domain": [
+            0.2,
+            1
+          ],
+          "range": [
+            0.25,
+            0.6
+          ],
+          "smooth": {
+            "attackSec": 1,
+            "releaseSec": 3
+          }
+        }
+      }
+    }
+  ]
+}

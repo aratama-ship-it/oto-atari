@@ -1,0 +1,26 @@
+{
+  "format": "oto-atari.mapping",
+  "version": 2,
+  "name": "piano-note-lights",
+  "description": "B曲の推定ピアノ単音。音高を左右位置、モデル強度70%と原曲全体の相対音量30%を光量にする。和音内の各音の実音量や元MIDIベロシティではない。",
+  "limits": { "maxPerSec": 32 },
+  "palettes": {
+    "piano": { "surface": "#0b0b0d", "note": "#8fd4c9" }
+  },
+  "startPalette": "piano",
+  "rules": [
+    {
+      "id": "piano-note-position-light",
+      "on": { "event": "note" },
+      "quantize": { "to": "none" },
+      "emit": {
+        "intent": "point",
+        "zone": "mid",
+        "color": "@palette.note",
+        "x": { "from": "position01", "range": [0, 1] },
+        "level": { "from": "modelStrength01", "secondaryFrom": "mixLevel01", "secondaryWeight": 0.3, "range": [0, 1] },
+        "dur": { "from": "dur", "domain": [0, 4], "range": [0, 4] }
+      }
+    }
+  ]
+}

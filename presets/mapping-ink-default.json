@@ -1,0 +1,409 @@
+{
+  "format": "oto-atari.mapping",
+  "version": 1,
+  "name": "ink-default",
+  "description": "低い音ほど下・重い・暗い色、高い音ほど上・軽い・明るい色。拍は面の脈、区切りで色世界を替える。",
+  "limits": {
+    "maxPerSec": 24
+  },
+  "palettes": {
+    "paper": {
+      "surface": "#ece6da",
+      "sub": "#141414",
+      "bass": "#1f2a5c",
+      "lowmid": "#6b3fa0",
+      "mid": "#e2452f",
+      "high": "#f5b400",
+      "air": "#38c6d9",
+      "accent": "#ff5fa2"
+    },
+    "night": {
+      "surface": "#0b0b0d",
+      "sub": "#3a2a6a",
+      "bass": "#2a56c6",
+      "lowmid": "#7a4fd8",
+      "mid": "#ff6a3d",
+      "high": "#ffd23f",
+      "air": "#9ff3ff",
+      "accent": "#ffffff"
+    },
+    "acid": {
+      "surface": "#0f1a0f",
+      "sub": "#1c3a1c",
+      "bass": "#2e8b57",
+      "lowmid": "#7fdc3a",
+      "mid": "#d4ff2a",
+      "high": "#fff6a3",
+      "air": "#ffffff",
+      "accent": "#ff2ad4"
+    }
+  },
+  "startPalette": "paper",
+  "rules": [
+    {
+      "id": "sub-splat",
+      "on": {
+        "event": "onset",
+        "band": [
+          "sub"
+        ],
+        "minStrength": 0.3
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "floor",
+        "color": "@palette.sub",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.5,
+            1.0
+          ],
+          "curve": "pow0.5"
+        },
+        "weight": 1.0,
+        "decaySec": 3.0,
+        "spread": 0.3
+      }
+    },
+    {
+      "id": "bass-splat",
+      "on": {
+        "event": "onset",
+        "band": [
+          "bass"
+        ],
+        "minStrength": 0.3
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "low",
+        "color": "@palette.bass",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.35,
+            0.9
+          ],
+          "curve": "pow2"
+        },
+        "weight": 0.85,
+        "decaySec": 2.2,
+        "spread": 0.4
+      }
+    },
+    {
+      "id": "lowmid-splat",
+      "on": {
+        "event": "onset",
+        "band": [
+          "lowmid"
+        ],
+        "minStrength": 0.3
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "mid",
+        "color": "@palette.lowmid",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.25,
+            0.7
+          ]
+        },
+        "weight": 0.6,
+        "decaySec": 1.6,
+        "spread": 0.5
+      }
+    },
+    {
+      "id": "mid-splat",
+      "on": {
+        "event": "onset",
+        "band": [
+          "mid"
+        ],
+        "minStrength": 0.3
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "mid",
+        "color": "@palette.mid",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.2,
+            0.6
+          ]
+        },
+        "weight": 0.45,
+        "decaySec": 1.2,
+        "spread": 0.6
+      }
+    },
+    {
+      "id": "high-splat",
+      "on": {
+        "event": "onset",
+        "band": [
+          "high"
+        ],
+        "minStrength": 0.25
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "high",
+        "color": "@palette.high",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.12,
+            0.4
+          ]
+        },
+        "weight": 0.25,
+        "decaySec": 0.8,
+        "spread": 0.8
+      }
+    },
+    {
+      "id": "air-splat",
+      "on": {
+        "event": "onset",
+        "band": [
+          "air"
+        ],
+        "minStrength": 0.25
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "air",
+        "color": "@palette.air",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.08,
+            0.3
+          ]
+        },
+        "weight": 0.1,
+        "decaySec": 0.6,
+        "spread": 1.0
+      }
+    },
+    {
+      "id": "downbeat-pulse",
+      "on": {
+        "event": "downbeat",
+        "minConfidence": 0.2
+      },
+      "emit": {
+        "intent": "pulse",
+        "zone": "all",
+        "color": "@palette.accent",
+        "level": {
+          "from": "strength",
+          "range": [
+            0.15,
+            0.45
+          ]
+        },
+        "decaySec": 0.35
+      }
+    },
+    {
+      "id": "beat-pulse",
+      "on": {
+        "event": "beat",
+        "beatInBar": [
+          1,
+          2,
+          3
+        ]
+      },
+      "emit": {
+        "intent": "pulse",
+        "zone": "all",
+        "color": "@palette.accent",
+        "level": {
+          "from": "strength",
+          "range": [
+            0.05,
+            0.2
+          ]
+        },
+        "decaySec": 0.2
+      }
+    },
+    {
+      "id": "air-wash",
+      "on": {
+        "curve": "band.air"
+      },
+      "emit": {
+        "intent": "wash",
+        "zone": "air",
+        "color": "@palette.air",
+        "level": {
+          "from": "value",
+          "domain": [
+            0.35,
+            1
+          ],
+          "range": [
+            0,
+            0.5
+          ],
+          "curve": "pow1.5",
+          "smooth": {
+            "attackSec": 0.03,
+            "releaseSec": 0.5
+          }
+        }
+      }
+    },
+    {
+      "id": "sub-wash",
+      "on": {
+        "curve": "band.sub"
+      },
+      "emit": {
+        "intent": "wash",
+        "zone": "floor",
+        "color": "@palette.sub",
+        "level": {
+          "from": "value",
+          "domain": [
+            0.4,
+            1
+          ],
+          "range": [
+            0,
+            0.35
+          ],
+          "smooth": {
+            "attackSec": 0.02,
+            "releaseSec": 0.3
+          }
+        }
+      }
+    },
+    {
+      "id": "accent-strobe",
+      "on": {
+        "event": "accent",
+        "minStrength": 0.97
+      },
+      "emit": {
+        "intent": "strobe",
+        "zone": "high",
+        "color": "@palette.accent",
+        "hz": 10,
+        "duty": 0.4,
+        "dur": 0.25
+      }
+    },
+    {
+      "id": "drop-strobe",
+      "on": {
+        "event": "drop",
+        "minStrength": 0.5
+      },
+      "emit": {
+        "intent": "strobe",
+        "zone": "all",
+        "color": "#ffffff",
+        "hz": 8,
+        "duty": 0.5,
+        "dur": 1.0
+      }
+    },
+    {
+      "id": "build-sweep",
+      "on": {
+        "event": "build",
+        "minStrength": 0.2
+      },
+      "emit": {
+        "intent": "sweep",
+        "zone": "floor",
+        "toZone": "air",
+        "color": "@palette.high",
+        "dur": {
+          "from": "dur",
+          "domain": [
+            0,
+            8
+          ],
+          "range": [
+            1,
+            8
+          ]
+        },
+        "width": 0.25
+      }
+    },
+    {
+      "id": "silence-blackout",
+      "on": {
+        "event": "silence"
+      },
+      "emit": {
+        "intent": "blackout",
+        "dur": {
+          "from": "dur",
+          "domain": [
+            0,
+            4
+          ],
+          "range": [
+            0.4,
+            4
+          ]
+        },
+        "fadeSec": 0.1
+      }
+    },
+    {
+      "id": "section-palette",
+      "on": {
+        "event": "sectionChange",
+        "minStrength": 0.2
+      },
+      "emit": {
+        "intent": "palette",
+        "cycle": [
+          "night",
+          "acid",
+          "paper"
+        ]
+      }
+    },
+    {
+      "id": "haze-loudness",
+      "on": {
+        "curve": "loudness"
+      },
+      "emit": {
+        "intent": "haze",
+        "zone": "all",
+        "level": {
+          "from": "value",
+          "domain": [
+            0.3,
+            1
+          ],
+          "range": [
+            0.2,
+            0.8
+          ],
+          "smooth": {
+            "attackSec": 0.5,
+            "releaseSec": 2.0
+          }
+        }
+      }
+    }
+  ]
+}

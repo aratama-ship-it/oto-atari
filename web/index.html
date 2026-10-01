@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>音アタリ — 楽曲を解析して、塗料と照明に割り振る</title>
+<link rel="stylesheet" href="style.css?v=20261001a">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="name">音アタリ</span><span class="ver" id="version">v0.3.0</span></div>
+  <div class="top-status" id="topStatus">音源を読み込んでください</div>
+  <nav class="views" role="tablist" aria-label="表示">
+    <button class="view" data-view="exp" role="tab" aria-selected="false">体験</button>
+    <button class="view active" data-view="ink" role="tab" aria-selected="true">インク</button>
+    <button class="view" data-view="rig" role="tab" aria-selected="false">照明図</button>
+    <button class="view" data-view="both" role="tab" aria-selected="false">両方</button>
+  </nav>
+  <button id="btnFocus" class="focus-toggle" type="button" disabled aria-pressed="false">出力を見る</button>
+</header>
+
+<main class="layout">
+  <aside class="side">
+    <section class="panel" id="panelSource">
+      <h2>1. 音源</h2>
+      <div class="row source-actions">
+        <button id="btnSample" class="primary">サンプル曲を読み込む</button>
+        <button id="btnPianoSample">B曲・ピアノ単音を読み込む</button>
+        <label class="file">音源ファイル…<input type="file" id="fileAudio" accept="audio/*"></label>
+      </div>
+      <p class="hint" id="pianoNotice" hidden>B曲の493音はモデルが推定した候補です。左＝低音、右＝高音。光の大きさと明るさには原曲全体の相対音量を30％加えています。和音内の各音の実音量や元MIDIのベロシティではありません。音抜けの改善は今後の課題です。</p>
+      <div class="row small">
+        <label class="file">解析JSON（Python版）…<input type="file" id="fileFeatures" accept="application/json"></label>
+        <span class="hint" id="analyzeHint">JSONが無ければブラウザ内で解析します（約85秒の曲で数秒）</span>
+      </div>
+      <div class="progress" id="progress" hidden><div class="bar" id="progressBar"></div><span id="progressText"></span></div>
+      <dl class="facts" id="facts" hidden>
+        <dt>解析器</dt><dd id="fAnalyzer">—</dd>
+        <dt>BPM</dt><dd><span class="mono" id="fBpm">—</span> <span class="sub" id="fBpmConf"></span></dd>
+        <dt>区切り</dt><dd id="fSections">—</dd>
+        <dt>事象</dt><dd id="fEvents">—</dd>
+        <dt>打楽器</dt><dd id="fDrums">—</dd>
+      </dl>
+      <div class="row small" id="sensRow" hidden>
+        <label class="num" style="width:100%"><span style="white-space:nowrap">判定の感度</span> <input type="range" id="sensitivity" min="1" max="5" step="0.5" value="3" style="flex:1;min-width:80px"> <span class="mono" id="sensVal">3</span></label>
+        <span class="hint">上げるほど拾いやすく（拾いすぎも増える）。変えると判定をやり直します（約1秒）</span>
+        <label class="check" style="width:100%"><input type="checkbox" id="reinforce" checked> キックの規則性（四つ打ち等）で拾い漏れを復元する（復元分は合図音が高く、時間軸では水色の縁）</label>
+      </div>
+    </section>
+
+    <section class="panel" id="panelMapping">
+      <h2>2. 割り振り</h2>
+      <div class="row">
+        <select id="presetSelect" aria-label="割り振りの既定">
+          <option value="presets/mapping-kick-only.json">キックだけ（他の音は非表示）</option>
+          <option value="presets/mapping-drums-only.json">ドラムだけ（キック・スネア・ハイハット）</option>
+          <option value="presets/mapping-ink-default.json">全部の音：インク（重い音は下・暗く／軽い音は上・明るく）</option>
+          <option value="presets/mapping-lights-default.json">全部の音：照明（面明かり＋拍＋落としでストロボ）</option>
+          <option value="presets/mapping-piano-notes.json">ピアノ単音：音高→左右位置・強度＋原曲音量→光量</option>
+        </select>
+        <label class="file">JSON…<input type="file" id="fileMapping" accept="application/json"></label>
+      </div>
+      <div class="palette" id="paletteRow" aria-label="現在の配色"></div>
+      <ul class="rules" id="rules"></ul>
+      <div class="row small"><span class="hint" id="mappingStats"></span></div>
+    </section>
+
+    <section class="panel" id="panelOutput">
+      <h2>3. 出力</h2>
+      <div class="row wrap">
+        <label class="check"><input type="checkbox" id="suppressStrobe"> ストロボを抑える（脈に置き換え）</label>
+        <label class="check"><input type="checkbox" id="reduceMotion"> 動きを抑える（体験表示の粒子・拡散を止め、閃光を弱める）</label>
+        <label class="check"><input type="checkbox" id="audition"> 合図音（splat の位置でクリック音。耳で検証）</label>
+        <label class="num">遅れ補正 <input type="number" id="latencyMs" value="0" step="5" min="-500" max="500"> ms</label>
+      </div>
+      <div class="row wrap">
+        <button id="btnExportFeatures" disabled>特徴JSON</button>
+        <button id="btnExportIntents" disabled>意図JSON</button>
+      </div>
+      <details class="gamma">
+        <summary>舞台スケッチγ へ下書きを書き出す（実験）</summary>
+        <p class="hint">γで書き出した「ショーJSON」か「照明デザインJSON」を雛形にして、区切り・落とし・無音の時刻に「登録した明かり」とタイムラインのライトキューを足した複製を作ります。原本は変更しません。γ本体での読み込み確認はまだです。</p>
+        <label class="file">雛形JSON…<input type="file" id="fileGammaTemplate" accept="application/json"></label>
+        <select id="gammaScene" aria-label="対象シーン" hidden></select>
+        <button id="btnExportGamma" disabled>γ下書きを保存</button>
+        <div class="hint" id="gammaSummary"></div>
+      </details>
+    </section>
+  </aside>
+
+  <section class="stage" id="stage">
+    <canvas id="inkCanvas" class="surface" aria-label="インク描画"></canvas>
+    <canvas id="rigCanvas" class="surface" aria-label="照明図" hidden></canvas>
+    <canvas id="expCanvas" class="surface" aria-label="体験表示" hidden></canvas>
+    <div class="stage-guide" id="stageGuide" hidden>
+      <strong id="stageGuideTitle">出力プレビュー</strong>
+      <span id="stageGuideText"></span>
+    </div>
+    <div class="live" id="live" aria-live="off">
+      <div class="meters" id="meters"></div>
+      <ol class="log" id="log"></ol>
+    </div>
+  </section>
+</main>
+
+<footer class="transport">
+  <button id="btnPlay" class="play" disabled aria-label="再生／一時停止">▶</button>
+  <div class="time mono"><span id="tNow">0:00.0</span><span class="sub"> / </span><span id="tDur">0:00.0</span></div>
+  <canvas id="timeline" class="timeline" aria-label="時間軸（クリックで移動）"></canvas>
+  <button id="btnNextEvent" type="button" disabled>次の反応 →</button>
+  <div class="tempo mono" id="tempoBox">— BPM</div>
+</footer>
+
+<script type="module" src="app.js?v=20261001a"></script>
+</body>
+</html>

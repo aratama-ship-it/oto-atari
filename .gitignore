@@ -1,0 +1,10 @@
+# 公開リポジトリは成果物（web/・presets/・schema/・samples/）だけ。調査・設計資料・委譲ログ・解析器・テストはローカル。
+.DS_Store
+docs/
+design/
+_delegation/
+analysis/
+tests/
+web/.*.bak-*
+__pycache__/
+PROJECT_NOTES.md

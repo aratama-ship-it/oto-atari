@@ -1,0 +1,163 @@
+{
+  "format": "oto-atari.mapping",
+  "version": 1,
+  "name": "kick-only",
+  "description": "検証用。自前の打楽器判定で「キック」と判定した位置にだけ反応する。他の音には何も出さない。",
+  "limits": {
+    "maxPerSec": 12
+  },
+  "palettes": {
+    "paper": {
+      "surface": "#ece6da",
+      "sub": "#141414",
+      "bass": "#1f2a5c",
+      "lowmid": "#6b3fa0",
+      "mid": "#e2452f",
+      "high": "#f5b400",
+      "air": "#38c6d9",
+      "accent": "#ff5fa2"
+    }
+  },
+  "startPalette": "paper",
+  "rules": [
+    {
+      "id": "kick-splat",
+      "on": {
+        "event": "onset",
+        "tags": [
+          "kick"
+        ],
+        "minConfidence": 0.4
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "low",
+        "color": "@palette.bass",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.5,
+            1.0
+          ],
+          "curve": "pow0.5"
+        },
+        "weight": 1.0,
+        "decaySec": 1.5,
+        "spread": 0.25,
+        "x": {
+          "from": "pan",
+          "domain": [
+            -1,
+            1
+          ],
+          "range": [
+            0.08,
+            0.92
+          ]
+        }
+      }
+    },
+    {
+      "id": "kick-pulse",
+      "on": {
+        "event": "onset",
+        "tags": [
+          "kick"
+        ],
+        "minConfidence": 0.4
+      },
+      "emit": {
+        "intent": "pulse",
+        "zone": "all",
+        "color": "#ffffff",
+        "level": 0.35,
+        "decaySec": 0.18
+      }
+    },
+    {
+      "id": "snare-splat",
+      "enabled": false,
+      "on": {
+        "event": "onset",
+        "tags": [
+          "snare"
+        ],
+        "minConfidence": 0.4
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "high",
+        "color": "@palette.mid",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.3,
+            0.7
+          ]
+        },
+        "weight": 0.35,
+        "decaySec": 0.9,
+        "spread": 0.7,
+        "x": {
+          "from": "pan",
+          "domain": [
+            -1,
+            1
+          ],
+          "range": [
+            0.08,
+            0.92
+          ]
+        }
+      }
+    },
+    {
+      "id": "hat-splat",
+      "enabled": false,
+      "on": {
+        "event": "onset",
+        "tags": [
+          "hat"
+        ],
+        "minConfidence": 0.4
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "air",
+        "color": "@palette.air",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.08,
+            0.25
+          ]
+        },
+        "weight": 0.1,
+        "decaySec": 0.5,
+        "spread": 1.0,
+        "x": {
+          "from": "pan",
+          "domain": [
+            -1,
+            1
+          ],
+          "range": [
+            0.08,
+            0.92
+          ]
+        }
+      }
+    },
+    {
+      "id": "haze-fixed",
+      "on": {
+        "curve": "loudness"
+      },
+      "emit": {
+        "intent": "haze",
+        "zone": "all",
+        "level": 0.45
+      }
+    }
+  ]
+}
