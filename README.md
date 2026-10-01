@@ -19,7 +19,8 @@ oto-atari/
 ├── analysis/      analyze.py（Python・librosa）/ merge_piano_notes.py（B曲候補のv2統合）/ test_analyze.py / README.md
 ├── web/
 │   ├── lib/       dsp.mjs（FFT等）/ analyze-core.mjs（JS版解析器）/ mapping-engine.mjs（規則→Intent）/ validate.mjs
-│   ├── renderers/ ink.mjs（塗料）/ rig.mjs（照明図）/ experience.mjs（体験表示・時刻決定型）/ gamma-export.mjs（γ下書き）/ zones.mjs（zone→幾何）
+│   ├── renderers/ ink.mjs（塗料）/ rig.mjs（照明図）/ experience.mjs（体験表示・時刻決定型）/ stage3d.mjs（舞台3D）/ gamma-export.mjs（γ下書き）/ zones.mjs（zone→幾何）
+│   ├── vendor/gamma/ γの照明4モジュール（2026-10-01の複製・本文無改変）
 │   └── index.html / app.js / style.css
 ├── presets/       既存のv1割り振り / mapping-piano-notes.json（v2）
 ├── samples/       gensan-extend.mp3＋解析結果 / B.mp3＋B-piano.features.v2.json

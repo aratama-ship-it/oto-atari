@@ -4,10 +4,11 @@ import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./
 import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs";
 import { InkRenderer } from "./renderers/ink.mjs";
 import { RigRenderer } from "./renderers/rig.mjs";
+import { Stage3dRenderer } from "./renderers/stage3d.mjs";
 import { ExperienceRenderer } from "./renderers/experience.mjs";
 import { buildGammaDraft, detectTemplate } from "./renderers/gamma-export.mjs";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 const $ = (id) => document.getElementById(id);
 const state = {
   audioCtx: null, buffer: null, source: null, startedAt: 0, offset: 0, playing: false,
@@ -19,6 +20,8 @@ window.otoAtari = { state }; // 検証用（ブラウザ自動操作から状態
 const ink = new InkRenderer($("inkCanvas"));
 const rig = new RigRenderer($("rigCanvas"));
 const exp = new ExperienceRenderer($("expCanvas"));
+const stage3d = new Stage3dRenderer($("stage3dCanvas"));
+$("stageViewpoint").addEventListener("change", (e) => { stage3d.setViewpoint(e.target.value); });
 $("reduceMotion").addEventListener("change", (e) => { exp.reduce = e.target.checked; });
 $("hatStyle").addEventListener("change", (e) => { exp.hatStyle = e.target.value; updateStageGuide(); });
 
@@ -49,7 +52,7 @@ function ctx() {
 }
 async function loadAudio(arrayBuffer, name) {
   stop();
-  state.ft = null; state.ftBase = null; state.intents = null; ink.reset(); rig.reset(); exp.reset();
+  state.ft = null; state.ftBase = null; state.intents = null; ink.reset(); rig.reset(); exp.reset(); stage3d.reset();
   ink.pointMode = false;
   $("facts").hidden = true; $("sensRow").hidden = true; $("pianoNotice").hidden = true;
   $("btnExportFeatures").disabled = true; $("btnExportIntents").disabled = true; $("btnExportGamma").disabled = true;
@@ -143,6 +146,7 @@ function recompile() {
   ink.reset(); rig.reset();
   ink.pointMode = rig.pointMode = state.intents.discrete.some((d) => d.intent === "point");
   exp.setData(state.intents.discrete, state.ft.events, { beats: state.ft.tempo && state.ft.tempo.confidence >= 0.3 ? state.ft.tempo.beats : null, sections: state.ft.sections || [] });
+  stage3d.setData(exp.data);
   seedActivePoints(now()); state.lastT = now();
   updateStageGuide();
 }
@@ -238,7 +242,8 @@ function frame() {
     }
     state.lastT = t;
   }
-  if (state.view === "exp") exp.frame(t, { playing: state.playing });
+  if (state.view === "stage3d") stage3d.frame(t, { playing: state.playing });
+  else if (state.view === "exp") exp.frame(t, { playing: state.playing });
   else {
     if (state.view !== "rig") ink.frame(t, cont, surface);
     if (state.view !== "ink") rig.frame(t, cont);
@@ -365,11 +370,20 @@ document.querySelectorAll(".views .view").forEach((b) => b.addEventListener("cli
 function setView(v) {
   state.view = v;
   document.querySelectorAll(".views .view").forEach((b) => { const on = b.dataset.view === v; b.classList.toggle("active", on); b.setAttribute("aria-selected", on); });
-  $("inkCanvas").hidden = v === "rig" || v === "exp"; $("rigCanvas").hidden = v === "ink" || v === "exp"; $("expCanvas").hidden = v !== "exp"; $("stage").classList.toggle("both", v === "both");
+  $("inkCanvas").hidden = v === "rig" || v === "exp" || v === "stage3d"; $("rigCanvas").hidden = v === "ink" || v === "exp" || v === "stage3d"; $("expCanvas").hidden = v !== "exp"; $("stage").classList.toggle("both", v === "both");
+  $("stage3dCanvas").hidden = v !== "stage3d";
+  $("stageViewpointControl").hidden = v !== "stage3d";
+  $("stage").classList.toggle("stage3d", v === "stage3d");
   ink.lastT = null; rig.lastT = null;
   updateStageGuide();
 }
 function updateStageGuide() {
+  $("stageGuide").hidden = !state.focus && state.view !== "stage3d";
+  if (state.view === "stage3d") {
+    $("stageGuideTitle").textContent = "舞台（3D）";
+    $("stageGuideText").textContent = "転がし＝キック（白青）／SS＝スネア（橙）／バトンのLEDバー20本＝ハイハット（金・表裏でバーが変わる）。γ と同じ光の塗り。ピアノ単音と戻りは未対応。ドラッグで見回し。";
+    return;
+  }
   const point = !!state.intents?.discrete.some((d) => d.intent === "point");
   if (state.view === "exp") {
     $("stageGuideTitle").textContent = "体験表示";

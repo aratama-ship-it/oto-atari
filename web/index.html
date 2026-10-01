@@ -4,14 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>音アタリ — 楽曲を解析して、塗料と照明に割り振る</title>
-<link rel="stylesheet" href="style.css?v=20261001b">
+<link rel="stylesheet" href="style.css?v=20261001c">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="name">音アタリ</span><span class="ver" id="version">v0.4.0</span></div>
+  <div class="brand"><span class="name">音アタリ</span><span class="ver" id="version">v0.5.0</span></div>
   <div class="top-status" id="topStatus">音源を読み込んでください</div>
   <nav class="views" role="tablist" aria-label="表示">
     <button class="view" data-view="exp" role="tab" aria-selected="false">体験</button>
+    <button class="view" data-view="stage3d" role="tab" aria-selected="false">舞台</button>
     <button class="view active" data-view="ink" role="tab" aria-selected="true">インク</button>
     <button class="view" data-view="rig" role="tab" aria-selected="false">照明図</button>
     <button class="view" data-view="both" role="tab" aria-selected="false">両方</button>
@@ -71,6 +72,7 @@
         <label class="check"><input type="checkbox" id="suppressStrobe"> ストロボを抑える（脈に置き換え）</label>
         <label class="check"><input type="checkbox" id="reduceMotion"> 動きを抑える（体験表示の粒子・拡散を止め、閃光を弱める）</label>
         <label class="num">ハット表示 <select id="hatStyle" aria-label="ハイハットの表示"><option value="bars">LEDバー列（上辺・表裏で担当が変わる）</option><option value="ring">金色の瞬き（中央）</option></select></label>
+        <label class="num stage-viewpoint" id="stageViewpointControl" hidden>視点 <select id="stageViewpoint" aria-label="舞台の視点"><option value="house-center">客席中央</option><option value="house-front">客席前方</option><option value="stage-center">舞台中央</option><option value="wing-shimote">下手袖</option></select></label>
         <label class="check"><input type="checkbox" id="audition"> 合図音（splat の位置でクリック音。耳で検証）</label>
         <label class="num">遅れ補正 <input type="number" id="latencyMs" value="0" step="5" min="-500" max="500"> ms</label>
       </div>
@@ -93,6 +95,7 @@
     <canvas id="inkCanvas" class="surface" aria-label="インク描画"></canvas>
     <canvas id="rigCanvas" class="surface" aria-label="照明図" hidden></canvas>
     <canvas id="expCanvas" class="surface" aria-label="体験表示" hidden></canvas>
+    <canvas id="stage3dCanvas" class="surface" aria-label="舞台（3D）" hidden></canvas>
     <div class="stage-guide" id="stageGuide" hidden>
       <strong id="stageGuideTitle">出力プレビュー</strong>
       <span id="stageGuideText"></span>
@@ -112,6 +115,10 @@
   <div class="tempo mono" id="tempoBox">— BPM</div>
 </footer>
 
-<script type="module" src="app.js?v=20261001b"></script>
+<script src="vendor/gamma/rig-engine.js?v=20261001c"></script>
+<script src="vendor/gamma/stage-lighting-plan-overlay.js?v=20261001c"></script>
+<script src="vendor/gamma/gamma-light-cue-overlay.js?v=20261001c"></script>
+<script src="vendor/gamma/stage-light-render.js?v=20261001c"></script>
+<script type="module" src="app.js?v=20261001c"></script>
 </body>
 </html>

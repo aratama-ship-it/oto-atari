@@ -434,3 +434,6 @@ export class ExperienceRenderer {
     ctx.restore();
   }
 }
+
+// 舞台表示も既存の減衰窓を参照する（描画の挙動は変更しない）。
+export { DRUM_WINDOW };
