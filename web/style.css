@@ -77,7 +77,7 @@ details.gamma p { margin: var(--s2) 0; }
 .surface { width: 100%; height: 100%; min-height: 0; display: block; }
 .surface[hidden] { display: none; }
 .stage.both .surface { height: 100%; }
-.stage-guide { position: absolute; top: var(--s4); left: var(--s4); z-index: 1; max-width: 360px; padding: var(--s3); background: rgba(20,20,22,0.82); border: 1px solid var(--line); pointer-events: none; }
+.stage-guide { position: absolute; top: auto; bottom: var(--s4); left: var(--s4); z-index: 1; max-width: 360px; padding: var(--s3); background: rgba(20,20,22,0.82); border: 1px solid var(--line); pointer-events: none; }
 .stage-guide strong, .stage-guide span { display: block; }
 .stage-guide strong { font-size: var(--fs-body); font-weight: 600; }
 .stage-guide span { margin-top: var(--s1); color: var(--text-sub); font-size: var(--fs-small); }

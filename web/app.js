@@ -7,7 +7,7 @@ import { RigRenderer } from "./renderers/rig.mjs";
 import { ExperienceRenderer } from "./renderers/experience.mjs";
 import { buildGammaDraft, detectTemplate } from "./renderers/gamma-export.mjs";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 const $ = (id) => document.getElementById(id);
 const state = {
   audioCtx: null, buffer: null, source: null, startedAt: 0, offset: 0, playing: false,
@@ -20,6 +20,7 @@ const ink = new InkRenderer($("inkCanvas"));
 const rig = new RigRenderer($("rigCanvas"));
 const exp = new ExperienceRenderer($("expCanvas"));
 $("reduceMotion").addEventListener("change", (e) => { exp.reduce = e.target.checked; });
+$("hatStyle").addEventListener("change", (e) => { exp.hatStyle = e.target.value; updateStageGuide(); });
 
 // ---------- 音源 ----------
 function ctx() {
@@ -141,7 +142,7 @@ function recompile() {
   ink.setSurface(state.mapping.palettes[state.mapping.startPalette]?.surface);
   ink.reset(); rig.reset();
   ink.pointMode = rig.pointMode = state.intents.discrete.some((d) => d.intent === "point");
-  exp.setData(state.intents.discrete, state.ft.events);
+  exp.setData(state.intents.discrete, state.ft.events, { beats: state.ft.tempo && state.ft.tempo.confidence >= 0.3 ? state.ft.tempo.beats : null, sections: state.ft.sections || [] });
   seedActivePoints(now()); state.lastT = now();
   updateStageGuide();
 }
@@ -374,7 +375,7 @@ function updateStageGuide() {
     $("stageGuideTitle").textContent = "体験表示";
     $("stageGuideText").textContent = point
       ? "左＝低音／右＝高音。にじみの大きさと明るさは推定強度（モデル強度70％＋原曲全体の相対音量30％）。候補の推定であり、各音の実音量や元MIDIのベロシティではありません。映像が遅れて見えるときは「遅れ補正」を正の値に。"
-      : "キック＝中央の白い閃光／スネア＝橙の稲妻／ハット＝金色の瞬き／無音＝暗転・戻り＝琥珀の空気光。打点は混合音からの推定です。映像が遅れて見えるときは「遅れ補正」を正の値に。";
+      : `キック＝中央の白い閃光／スネア＝橙の稲妻／ハット＝${$("hatStyle").value === "ring" ? "中央の金色の瞬き" : "上辺のLEDバー20本（表と裏で担当バーが変わり、3連・16分でさらにずれる。小節ごとに自動判定）"}／無音＝暗転・戻り＝琥珀の空気光。打点は混合音からの推定です。映像が遅れて見えるときは「遅れ補正」を正の値に。`;
     return;
   }
   $("stageGuideTitle").textContent = point ? "ピアノ単音の光" : (state.view === "rig" ? "照明図" : "インクの出力");
