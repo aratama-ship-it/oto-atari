@@ -1,15 +1,15 @@
 // app.js — 音源はAudioContext、無音デモだけはperformanceを時計にし、事前計算したIntentを引いて描く。
 import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs";
-import { createDemoFeatures } from "./lib/demo.mjs?v=20261002e";
+import { createDemoFeatures } from "./lib/demo.mjs?v=20261002f";
 import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs";
 import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs";
 import { InkRenderer } from "./renderers/ink.mjs";
 import { RigRenderer } from "./renderers/rig.mjs";
-import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261002e";
-import { ExperienceRenderer } from "./renderers/experience.mjs?v=20261002e";
+import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261002f";
+import { ExperienceRenderer } from "./renderers/experience.mjs?v=20261002f";
 import { buildGammaDraft, detectTemplate } from "./renderers/gamma-export.mjs";
 
-const VERSION = "0.6.5";
+const VERSION = "0.6.6";
 const $ = (id) => document.getElementById(id);
 const state = {
   audioCtx: null, buffer: null, source: null, startedAt: 0, offset: 0, playing: false,
@@ -458,7 +458,8 @@ function updateStageGuide() {
   $("stageGuide").hidden = state.demo || !state.buffer || (!state.focus && !compactMedia.matches && state.view !== "stage3d");
   if (state.view === "stage3d") {
     $("stageGuideTitle").textContent = "舞台（3D）";
-    $("stageGuideText").textContent = "転がし＝キック（白青のウォッシュを客席側へ）／SS＝スネア（橙・広め）／LEDバー20本＝ハイハット（金・バーだけ）／吊りスポット8台＝ピアノなどの単音（水緑・一音ずつ点灯、低音は左・高音は右）。戻りは未対応。ドラッグで見回し。";
+    const spots = stage3d.rig.fixtures.filter((f) => f.soundRole === "point").length;
+    $("stageGuideText").textContent = `転がし＝キック（白青のウォッシュを客席側へ）／SS＝スネア（橙・広め）／LEDバー20本＝ハイハット（金・バーだけ）／吊りスポット${spots}台・2列＝ピアノ・プラックなどのアタック（水緑・音程ごとに別の灯、低音は左・高音は右）。戻りは未対応。ドラッグで見回し。`;
     return;
   }
   const point = !!state.intents?.discrete.some((d) => d.intent === "point");

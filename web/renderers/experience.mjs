@@ -101,7 +101,11 @@ export function collectExperienceData(discrete = [], events = [], { beats = null
     h.leds = c.N ? ledBarsForSlot(c.slot, c.N, { layout: c.N === 4 ? "block" : "interleave", mirror: sectionIndexAt(h.t) % 2 === 1 }) : [c.slot % LED_COUNT];
   });
   const cues = events.filter((e) => e.type === "drop" || e.type === "silence").map((e) => ({ t: e.t, type: e.type, dur: e.dur || 0, strength: e.strength ?? 1 })).sort((a, b) => a.t - b.t);
-  return { hits, points, cues, maxDur, mode: points.length ? "piano" : "drums", ledBars: cls.bars, ledFallback: !usable };
+  // 曲全体の音程を残す。ルールをOFFにしても舞台の台数・担当位置は動かさない。
+  const pointSources = events.filter((e) => e.type === "note" ||
+    (e.type === "onset" && Number.isFinite(e.position01) && e.tags?.some((tag) => tag.name === "pitched-attack")))
+    .map((e) => ({ pitch: e.type === "note" ? e.pitchMidi : undefined, x: e.position01 }));
+  return { hits, points, pointSources, cues, maxDur, mode: points.length ? "piano" : "drums", ledBars: cls.bars, ledFallback: !usable };
 }
 
 /** 昇順配列 arr で arr[i].t >= t となる最初の i。 */

@@ -1,6 +1,6 @@
-// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜21。
+// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜22。
 // γの幾何ブロックは _delegation/gamma-src-2026-10-01/stage-first-person.js から無改変抽出。
-import { DRUM_WINDOW } from "./experience.mjs?v=20261002e";
+import { DRUM_WINDOW } from "./experience.mjs?v=20261002f";
 
 const W = 12, D = 9, H = 8;
 const FIXTURE_OUTLINE_COLOR = "#808080";
@@ -211,8 +211,9 @@ export const STAGE_LIGHT_STYLE = Object.freeze({
   sideLowBeamDeg: 18, sideHighBeamDeg: 40, sideSoftness: 2,
 });
 export const STAGE_POINT_STYLE = Object.freeze({
-  count: 8, uStart: 0.1, uEnd: 0.9, barV: 0.32, barHeight: 6.5, aimV: 0.55,
-  beamDeg: 18, softness: 2, color: "#b7f9ec", windowSec: 0.6, decayPower: 1.8,
+  count: 24, uStart: 0.1, uEnd: 0.9, barHeight: 6.5,
+  rows: Object.freeze([Object.freeze({ barV: 0.28, aimV: 0.44 }), Object.freeze({ barV: 0.40, aimV: 0.68 })]),
+  beamDeg: 10, softness: 2, color: "#b7f9ec", windowSec: 0.6, decayPower: 1.8,
 });
 const STAGE_LED_STYLE = Object.freeze({
   length: 0.5, thickness: 0.06, emitterRatio: 0.88, coreWidth: 0.028,
@@ -220,8 +221,15 @@ const STAGE_LED_STYLE = Object.freeze({
 });
 const fixtureColor = (f) => f.soundRole === "point" ? STAGE_POINT_STYLE.color : COLORS[f.mount.type];
 
+// 音程がある場合はそれを正本にする。表示位置の丸めや同じx値で別の音程を束ねない。
+function pointIdentity(point) {
+  if (Number.isInteger(point.pitch)) return { key: `midi:${point.pitch}`, x: (point.pitch - 21) / 87 };
+  const x = clamp(finite(point.x, 0.5), 0, 1);
+  return { key: `position:${x}`, x };
+}
+
 /** sample-lightdesign.json mid-f-041〜052 の mount/種別と、確定したLED列。 */
-export function createDefaultRig() {
+export function createDefaultRig(pointSources = []) {
   const fixtures = [];
   for (const v of [0.32, 0.68]) for (const side of ["shimote", "kamite"]) for (const h of [0.55, 2.4]) {
     const no = 41 + fixtures.length, low = h === 0.55;
@@ -237,11 +245,23 @@ export function createDefaultRig() {
   for (let k = 0; k < 20; k++) fixtures.push({ id: `led-bar-${String(k + 1).padStart(2, "0")}`, no: 53 + k, name: `LEDバー ${k + 1}`,
     mount: { type: "truss", trussId: "bar-t-01", u: (k + 0.5) / 20 }, kind: "fixed", fixtureType: "led-bar", family: "led", beamDeg: 40, role: "吊り" });
   const p = STAGE_POINT_STYLE;
-  for (let k = 0; k < p.count; k++) fixtures.push({ id: `note-spot-${String(k + 1).padStart(2, "0")}`, no: 73 + k, name: `単音スポット ${k + 1}`,
-    mount: { type: "truss", trussId: "bar-note-01", u: p.uStart + (p.uEnd - p.uStart) * k / (p.count - 1) },
+  const sources = [...new Map(pointSources.map((point) => {
+    const identity = pointIdentity(point); return [identity.key, identity];
+  })).values()].sort((a, b) => a.x - b.x || a.key.localeCompare(b.key));
+  const count = Math.max(p.count, sources.length), pointFixtureIds = new Map();
+  const spotId = (k) => `note-spot-${String(k + 1).padStart(2, "0")}`;
+  const trussId = (row) => `bar-note-${String(row + 1).padStart(2, "0")}`;
+  sources.forEach((source, i) => {
+    // count >= sources.length なので丸めた後も各スロットは必ず別になる。
+    const slot = Math.round((sources.length > 1 ? i / (sources.length - 1) : clamp(source.x, 0, 1)) * (count - 1));
+    pointFixtureIds.set(source.key, spotId(slot));
+  });
+  for (let k = 0; k < count; k++) fixtures.push({ id: spotId(k), no: 73 + k, name: `単音スポット ${k + 1}`,
+    mount: { type: "truss", trussId: trussId(k % p.rows.length), u: p.uStart + (p.uEnd - p.uStart) * k / (count - 1) },
+    pointRow: k % p.rows.length,
     kind: "fixed", fixtureType: "profile-zoom", family: "profile", beamDeg: p.beamDeg, role: "吊り単音", soundRole: "point" });
   return { trusses: [{ id: "bar-t-01", v: 0.5, h: 6.5, label: "照明バトン2" },
-    { id: "bar-note-01", v: p.barV, h: p.barHeight, label: "単音スポット用バトン" }], fixtures };
+    ...p.rows.map((row, i) => ({ id: trussId(i), v: row.barV, h: p.barHeight, label: `単音スポット用バトン${i + 1}` }))], fixtures, pointFixtureIds };
 }
 
 export function createStageDesign(rig = createDefaultRig()) {
@@ -251,7 +271,7 @@ export function createStageDesign(rig = createDefaultRig()) {
     // 転がしは舞台奥から客席側へ。LEDは発光面と近傍のにじみだけで、照射面を持たない。
     const aim = m.type === "floor" ? { u: m.u, v: STAGE_LIGHT_STYLE.floorAimV, hM: STAGE_LIGHT_STYLE.floorAimHeight }
       : m.type === "side" ? { u: m.side === "shimote" ? 0.85 : 0.15, v: m.v, hM: 1.0 }
-      : { u: m.u, v: point ? STAGE_POINT_STYLE.aimV : 0.5, hM: 0 };
+      : { u: m.u, v: point ? STAGE_POINT_STYLE.rows[f.pointRow].aimV : 0.5, hM: 0 };
     lights[f.id] = { on: true, level: 100, color: fixtureColor(f), surface: m.type === "side" || point ? "floor" : "air", path: { kind: "still", a: aim },
       speed: "normal", periodSec: null, offsetSec: 0, levelTo: null, beamDegTo: null, beamDeg: f.beamDeg,
       beamEdgeSoftness: point ? STAGE_POINT_STYLE.softness : m.type === "floor" ? STAGE_LIGHT_STYLE.floorSoftness : STAGE_LIGHT_STYLE.sideSoftness,
@@ -282,16 +302,16 @@ export function fixtureLevelsAt(t, expData, rig) {
     }
   }
   // アタックの時刻だけで短く点滅。音価が長い音にも光の保持は足さず、連打はそれぞれ再発火する。
-  const spots = rig.fixtures.filter((f) => f.soundRole === "point"), points = expData.points || [];
+  const points = expData.points || [];
   lo = 0; hi = points.length;
   while (lo < hi) { const mid = (lo + hi) >> 1; if (points[mid].t < t - STAGE_POINT_STYLE.windowSec) lo = mid + 1; else hi = mid; }
-  for (let i = lo; spots.length && i < points.length; i++) {
+  for (let i = lo; i < points.length; i++) {
     const point = points[i]; if (point.t > t) break;
     const age = t - point.t;
     if (age < 0 || age >= STAGE_POINT_STYLE.windowSec) continue;
-    const slot = Math.min(spots.length - 1, Math.floor(clamp(finite(point.x, 0.5), 0, 1) * spots.length));
+    const value = levels.get(rig.pointFixtureIds.get(pointIdentity(point).key));
+    if (!value) continue;
     const life = (1 - age / STAGE_POINT_STYLE.windowSec) ** STAGE_POINT_STYLE.decayPower;
-    const value = levels.get(spots[slot].id);
     value.level = Math.max(value.level, life * clamp(finite(point.level, 0), 0, 1) * 100);
   }
   return levels;
@@ -448,16 +468,13 @@ export function buildStageModel(design, rig, { overlay, plan, engine, body }) {
 export class Stage3dRenderer {
   constructor(canvas) {
     this.canvas = canvas; this.ctx = canvas.getContext("2d"); this.data = null;
-    this.rig = createDefaultRig(); this.design = createStageDesign(this.rig);
     this.render = window.SHOSAI_LIGHT_RENDER;
     this.body = window.FIXTURE_BODY;
     const overlay = window.SHOSAI_STAGE_LIGHT_CUE_OVERLAY;
     const plan = window.SHOSAI_STAGE_LIGHTING_PLAN_OVERLAY;
     if (!window.RIG_ENGINE || !this.render || !overlay || !plan || !this.body) throw new Error("舞台の描画部品を読み込めません。ページを再読み込みしてください");
-    // 幾何はこの1回だけ。setData/視点/時刻の変更ではbuildを呼び直さない。
-    this.model = buildStageModel(this.design, this.rig, { overlay, plan, engine: window.RIG_ENGINE, body: this.body });
-    this.pools = new Map(this.model.fixtures.filter((f) => f.pool).map((f) => [f.id, f.pool]));
-    this.beams = new Map(this.model.fixtures.filter((f) => f.beam).map((f) => [f.id, f.beam]));
+    this.modelParts = { overlay, plan, engine: window.RIG_ENGINE, body: this.body };
+    this.setRig(createDefaultRig());
     this.setViewpoint("house-center");
     let drag = null;
     canvas.addEventListener("pointerdown", (e) => {
@@ -474,7 +491,20 @@ export class Stage3dRenderer {
     const endDrag = (e) => { if (drag && e.pointerId === drag.id) drag = null; };
     canvas.addEventListener("pointerup", endDrag); canvas.addEventListener("pointercancel", endDrag); canvas.addEventListener("lostpointercapture", endDrag);
   }
-  setData(expData) { this.data = expData; }
+  setRig(rig) {
+    const sameLayout = this.rig?.fixtures.length === rig.fixtures.length;
+    this.rig = rig;
+    if (sameLayout) return;
+    // 幾何の作り直しは曲の必要台数が変わった時だけ。再生・シーク・ルールOFFでは不要。
+    this.design = createStageDesign(rig);
+    this.model = buildStageModel(this.design, rig, this.modelParts);
+    this.pools = new Map(this.model.fixtures.filter((f) => f.pool).map((f) => [f.id, f.pool]));
+    this.beams = new Map(this.model.fixtures.filter((f) => f.beam).map((f) => [f.id, f.beam]));
+  }
+  setData(expData) {
+    this.data = expData;
+    this.setRig(createDefaultRig([...(expData?.pointSources || []), ...(expData?.points || [])]));
+  }
   reset() { this.data = null; }
   setViewpoint(id) { if (VIEWPOINTS[id]) { this.viewpoint = id; this.view = { ...VIEWPOINTS[id] }; } }
   resize() {
