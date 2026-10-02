@@ -2,14 +2,15 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141416">
 <title>音アタリ — 楽曲を解析して、塗料と照明に割り振る</title>
-<link rel="stylesheet" href="style.css?v=20261001c">
+<link rel="stylesheet" href="style.css?v=20261001d">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="name">音アタリ</span><span class="ver" id="version">v0.5.0</span></div>
-  <div class="top-status" id="topStatus">音源を読み込んでください</div>
+  <div class="brand"><span class="name">音アタリ</span><span class="ver" id="version">v0.6.0</span></div>
+  <div class="top-status" id="topStatus" role="status">音源を読み込んでください</div>
   <nav class="views" role="tablist" aria-label="表示">
     <button class="view" data-view="exp" role="tab" aria-selected="false">体験</button>
     <button class="view" data-view="stage3d" role="tab" aria-selected="false">舞台</button>
@@ -18,14 +19,22 @@
     <button class="view" data-view="both" role="tab" aria-selected="false">両方</button>
   </nav>
   <button id="btnFocus" class="focus-toggle" type="button" disabled aria-pressed="false">出力を見る</button>
+  <button id="btnSettings" class="settings-toggle" type="button" aria-expanded="true" aria-controls="settings" hidden>映像を見る</button>
 </header>
 
 <main class="layout">
-  <aside class="side">
+  <aside class="side" id="settings" aria-label="音源と出力の設定">
+    <nav class="settings-nav" id="settingsNav" aria-label="設定の種類" hidden>
+      <button type="button" data-panel="panelSource" aria-controls="panelSource" aria-pressed="true">音源</button>
+      <button type="button" data-panel="panelMapping" aria-controls="panelMapping" aria-pressed="false">割り振り</button>
+      <button type="button" data-panel="panelOutput" aria-controls="panelOutput" aria-pressed="false">出力</button>
+    </nav>
+    <p class="settings-status" id="settingsStatus">音源を読み込んでください</p>
     <section class="panel" id="panelSource">
       <h2>1. 音源</h2>
       <div class="row source-actions">
         <button id="btnSample" class="primary">サンプル曲を読み込む</button>
+        <button id="btnLightDemo" type="button">光だけのデモに戻る</button>
         <button id="btnPianoSample">B曲・ピアノ単音を読み込む</button>
         <label class="file">音源ファイル…<input type="file" id="fileAudio" accept="audio/*"></label>
       </div>
@@ -51,10 +60,10 @@
 
     <section class="panel" id="panelMapping">
       <h2>2. 割り振り</h2>
-      <div class="row">
+      <div class="row mapping-actions">
         <select id="presetSelect" aria-label="割り振りの既定">
           <option value="presets/mapping-kick-only.json">キックだけ（他の音は非表示）</option>
-          <option value="presets/mapping-drums-only.json">ドラムだけ（キック・スネア・ハイハット）</option>
+          <option value="presets/mapping-drums-only.json" selected>ドラムだけ（キック・スネア・ハイハット）</option>
           <option value="presets/mapping-ink-default.json">全部の音：インク（重い音は下・暗く／軽い音は上・明るく）</option>
           <option value="presets/mapping-lights-default.json">全部の音：照明（面明かり＋拍＋落としでストロボ）</option>
           <option value="presets/mapping-piano-notes.json">ピアノ単音：音高→左右位置・強度＋原曲音量→光量</option>
@@ -72,9 +81,8 @@
         <label class="check"><input type="checkbox" id="suppressStrobe"> ストロボを抑える（脈に置き換え）</label>
         <label class="check"><input type="checkbox" id="reduceMotion"> 動きを抑える（体験表示の粒子・拡散を止め、閃光を弱める）</label>
         <label class="num">ハット表示 <select id="hatStyle" aria-label="ハイハットの表示"><option value="bars">LEDバー列（上辺・表裏で担当が変わる）</option><option value="ring">金色の瞬き（中央）</option></select></label>
-        <label class="num stage-viewpoint" id="stageViewpointControl" hidden>視点 <select id="stageViewpoint" aria-label="舞台の視点"><option value="house-center">客席中央</option><option value="house-front">客席前方</option><option value="stage-center">舞台中央</option><option value="wing-shimote">下手袖</option></select></label>
         <label class="check"><input type="checkbox" id="audition"> 合図音（splat の位置でクリック音。耳で検証）</label>
-        <label class="num">遅れ補正 <input type="number" id="latencyMs" value="0" step="5" min="-500" max="500"> ms</label>
+        <div class="latency-control"><label for="latencyMs">遅れ補正（ms）</label><div class="number-stepper"><button id="btnLatencyMinus" type="button" aria-label="遅れ補正を5ミリ秒減らす">−</button><input type="number" id="latencyMs" value="0" step="5" min="-500" max="500" inputmode="decimal"><button id="btnLatencyPlus" type="button" aria-label="遅れ補正を5ミリ秒増やす">＋</button></div></div>
       </div>
       <div class="row wrap">
         <button id="btnExportFeatures" disabled>特徴JSON</button>
@@ -91,34 +99,45 @@
     </section>
   </aside>
 
-  <section class="stage" id="stage">
+  <div class="preview" id="preview">
+    <div class="demo-banner" id="demoBanner" hidden>
+      <div><strong>光のデモ · 無音</strong><span>音源なしで体験できます</span></div>
+      <button type="button" class="primary" id="btnDemoMusic">音楽も再生</button>
+    </div>
+    <div class="preview-toolbar" id="stageViewpointControl" hidden>
+      <label class="num stage-viewpoint">視点 <select id="stageViewpoint" aria-label="舞台の視点"><option value="house-center">客席中央</option><option value="house-front">客席前方</option><option value="stage-center">舞台中央</option><option value="wing-shimote">下手袖</option></select></label>
+      <span class="hint">ドラッグで見回す</span>
+    </div>
+    <section class="stage" id="stage">
     <canvas id="inkCanvas" class="surface" aria-label="インク描画"></canvas>
     <canvas id="rigCanvas" class="surface" aria-label="照明図" hidden></canvas>
     <canvas id="expCanvas" class="surface" aria-label="体験表示" hidden></canvas>
     <canvas id="stage3dCanvas" class="surface" aria-label="舞台（3D）" hidden></canvas>
-    <div class="stage-guide" id="stageGuide" hidden>
-      <strong id="stageGuideTitle">出力プレビュー</strong>
+    <div class="empty-state" id="emptyState"><strong>音の反応を、光で見る</strong><span>音源を読み込むと、ここに出力が表示されます。</span><button type="button" id="btnChooseSource">音源を選ぶ</button></div>
+    <details class="stage-guide" id="stageGuide" open hidden>
+      <summary id="stageGuideTitle">出力プレビュー</summary>
       <span id="stageGuideText"></span>
-    </div>
+    </details>
     <div class="live" id="live" aria-live="off">
       <div class="meters" id="meters"></div>
       <ol class="log" id="log"></ol>
     </div>
-  </section>
+    </section>
+  </div>
 </main>
 
 <footer class="transport">
   <button id="btnPlay" class="play" disabled aria-label="再生／一時停止">▶</button>
   <div class="time mono"><span id="tNow">0:00.0</span><span class="sub"> / </span><span id="tDur">0:00.0</span></div>
-  <canvas id="timeline" class="timeline" aria-label="時間軸（クリックで移動）"></canvas>
+  <div class="seek-track"><canvas id="timeline" class="timeline" aria-hidden="true"></canvas><input type="range" id="seek" min="0" max="1" step="0.01" value="0" aria-label="再生位置" disabled></div>
   <button id="btnNextEvent" type="button" disabled>次の反応 →</button>
   <div class="tempo mono" id="tempoBox">— BPM</div>
 </footer>
 
-<script src="vendor/gamma/rig-engine.js?v=20261001c"></script>
-<script src="vendor/gamma/stage-lighting-plan-overlay.js?v=20261001c"></script>
-<script src="vendor/gamma/gamma-light-cue-overlay.js?v=20261001c"></script>
-<script src="vendor/gamma/stage-light-render.js?v=20261001c"></script>
-<script type="module" src="app.js?v=20261001c"></script>
+<script src="vendor/gamma/rig-engine.js?v=20261001d"></script>
+<script src="vendor/gamma/stage-lighting-plan-overlay.js?v=20261001d"></script>
+<script src="vendor/gamma/gamma-light-cue-overlay.js?v=20261001d"></script>
+<script src="vendor/gamma/stage-light-render.js?v=20261001d"></script>
+<script type="module" src="app.js?v=20261001d"></script>
 </body>
 </html>

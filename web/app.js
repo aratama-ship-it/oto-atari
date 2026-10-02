@@ -1,5 +1,6 @@
-// app.js — 音アタリ ブラウザUI。音源の時計（AudioContext）を唯一のマスターにし、事前計算した Intent を引いて描く。
+// app.js — 音源はAudioContext、無音デモだけはperformanceを時計にし、事前計算したIntentを引いて描く。
 import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs";
+import { createDemoFeatures } from "./lib/demo.mjs";
 import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs";
 import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs";
 import { InkRenderer } from "./renderers/ink.mjs";
@@ -8,12 +9,12 @@ import { Stage3dRenderer } from "./renderers/stage3d.mjs";
 import { ExperienceRenderer } from "./renderers/experience.mjs";
 import { buildGammaDraft, detectTemplate } from "./renderers/gamma-export.mjs";
 
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 const $ = (id) => document.getElementById(id);
 const state = {
   audioCtx: null, buffer: null, source: null, startedAt: 0, offset: 0, playing: false,
   ft: null, mapping: null, intents: null, disabledRules: new Set(), lastT: -1, view: "ink",
-  gammaTemplate: null, fileName: "", focus: false,
+  gammaTemplate: null, fileName: "", focus: false, demo: false,
 };
 $("version").textContent = `v${VERSION}`;
 window.otoAtari = { state }; // 検証用（ブラウザ自動操作から状態を読む。書き換え用ではない）
@@ -21,6 +22,9 @@ const ink = new InkRenderer($("inkCanvas"));
 const rig = new RigRenderer($("rigCanvas"));
 const exp = new ExperienceRenderer($("expCanvas"));
 const stage3d = new Stage3dRenderer($("stage3dCanvas"));
+const phoneMedia = matchMedia("(max-width: 699px), (max-width: 999px) and (max-height: 500px)");
+const compactMedia = matchMedia("(max-width: 1199px), (pointer: coarse)");
+const ui = { settingsOpen: false, panel: "panelSource", sourceBusy: false };
 $("stageViewpoint").addEventListener("change", (e) => { stage3d.setViewpoint(e.target.value); });
 $("reduceMotion").addEventListener("change", (e) => { exp.reduce = e.target.checked; });
 $("hatStyle").addEventListener("change", (e) => { exp.hatStyle = e.target.value; updateStageGuide(); });
@@ -39,26 +43,31 @@ function ctx() {
     // OS都合の中断（バックグラウンド化・Bluetooth切替等）で suspended になったまま気付かないと
     // 「再生中の表示なのに音が出ない」状態になる。検知して復帰を試み、UIの表示とずれないようにする。
     ac.addEventListener("statechange", () => {
-      if (ac.state === "suspended" && state.playing) {
+      if (ac.state === "suspended" && state.playing && !state.demo) {
         ac.resume().catch(() => {});
-        setTimeout(() => { if (ac.state === "suspended" && state.playing) { setStatus("音声が中断されました。もう一度 ▶ を押してください"); stop(); } }, 800);
+        setTimeout(() => { if (ac.state === "suspended" && state.playing && !state.demo) { setStatus("音声が中断されました。もう一度 ▶ を押してください"); stop(); } }, 800);
       }
     });
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && state.playing && ac.state === "suspended") ac.resume().catch(() => {});
+      if (document.visibilityState === "visible" && state.playing && !state.demo && ac.state === "suspended") ac.resume().catch(() => {});
     });
   }
   return state.audioCtx;
 }
 async function loadAudio(arrayBuffer, name) {
+  // 読み込めないファイルでも、現在の音源や無音デモを失わない。
+  const buf = await ctx().decodeAudioData(arrayBuffer.slice(0));
   stop();
+  state.demo = false; $("demoBanner").hidden = true; updatePlayButton();
+  state.buffer = null; state.mono = null; state.stereo = null; state.offset = 0;
+  $("btnPlay").disabled = true; $("btnFocus").disabled = true; $("seek").disabled = true;
+  $("seek").value = 0; $("tNow").textContent = $("tDur").textContent = fmt(0);
+  $("emptyState").hidden = false;
   state.ft = null; state.ftBase = null; state.intents = null; ink.reset(); rig.reset(); exp.reset(); stage3d.reset();
   ink.pointMode = false;
   $("facts").hidden = true; $("sensRow").hidden = true; $("pianoNotice").hidden = true;
   $("btnExportFeatures").disabled = true; $("btnExportIntents").disabled = true; $("btnExportGamma").disabled = true;
   $("btnNextEvent").disabled = true;
-  const ac = ctx();
-  const buf = await ac.decodeAudioData(arrayBuffer.slice(0));
   state.buffer = buf; state.fileName = name; state.offset = 0;
   const chans = []; for (let c = 0; c < buf.numberOfChannels; c++) chans.push(buf.getChannelData(c));
   state.mono = downmix(chans);
@@ -66,6 +75,8 @@ async function loadAudio(arrayBuffer, name) {
   $("tDur").textContent = fmt(buf.duration);
   $("btnPlay").disabled = false;
   $("btnFocus").disabled = false;
+  $("seek").max = String(buf.duration); $("seek").disabled = false;
+  $("emptyState").hidden = true;
   setStatus(`${name} — ${fmt(buf.duration)} / ${buf.sampleRate} Hz / ${buf.numberOfChannels}ch`);
 }
 async function analyzeInBrowser() {
@@ -137,9 +148,9 @@ function recompile() {
   state.intents = compileIntents(state.ft, effectiveMapping());
   const c = {}; for (const d of state.intents.discrete) c[d.intent] = (c[d.intent] || 0) + 1;
   $("mappingStats").textContent = `意図 ${state.intents.discrete.length} 件（${Object.entries(c).map(([k, v]) => `${k} ${v}`).join("・")}）＋連続 ${state.intents.continuous.length} 本 — ${Math.round(performance.now() - t0)} ms`;
-  $("btnExportIntents").disabled = false;
-  $("btnNextEvent").disabled = !state.buffer || !state.intents.discrete.some((d) => d.intent !== "pulse");
-  $("btnExportGamma").disabled = !state.gammaTemplate || state.intents.discrete.some((d) => d.intent === "point");
+  $("btnExportIntents").disabled = state.demo;
+  $("btnNextEvent").disabled = !hasPlayback() || !state.intents.discrete.some((d) => d.intent !== "pulse");
+  $("btnExportGamma").disabled = state.demo || !state.gammaTemplate || state.intents.discrete.some((d) => d.intent === "point");
   if (state.gammaTemplate && state.intents.discrete.some((d) => d.intent === "point")) $("gammaSummary").textContent = "単音の位置指定はγ下書きへ未対応";
   renderRules();
   ink.setSurface(state.mapping.palettes[state.mapping.startPalette]?.surface);
@@ -164,7 +175,8 @@ function renderRules() {
     const li = document.createElement("li"); li.className = state.disabledRules.has(r.id) ? "off" : "";
     const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !state.disabledRules.has(r.id); cb.setAttribute("aria-label", `${r.id} を有効にする`);
     cb.addEventListener("change", () => { cb.checked ? state.disabledRules.delete(r.id) : state.disabledRules.add(r.id); recompile(); });
-    const id = document.createElement("span"); id.className = "id"; id.textContent = r.id;
+    const id = document.createElement("label"); id.className = "id"; id.textContent = r.id;
+    cb.id = `rule-${ul.children.length}`; id.htmlFor = cb.id;
     const n = document.createElement("span"); n.className = "n"; n.textContent = r.on.curve ? "連続" : `${counts.get(r.id) ?? "—"}`;
     const desc = document.createElement("span"); desc.className = "desc"; desc.textContent = ruleDesc(r);
     li.append(cb, id, n, desc); ul.appendChild(li);
@@ -179,35 +191,51 @@ function renderPalette(name) {
 }
 
 // ---------- 再生 ----------
-function now() { if (!state.buffer) return 0; return state.playing ? Math.min(state.buffer.duration, state.offset + (ctx().currentTime - state.startedAt)) : state.offset; }
+function hasPlayback() { return state.demo || !!state.buffer; }
+function duration() { return state.demo ? state.ft.source.durationSec : (state.buffer?.duration || 0); }
+function now() {
+  if (!hasPlayback()) return 0;
+  if (!state.playing) return state.offset;
+  const clock = state.demo ? performance.now() / 1000 : state.audioCtx.currentTime;
+  return Math.min(duration(), state.offset + clock - state.startedAt);
+}
+function updatePlayButton() {
+  $("btnPlay").textContent = state.playing ? "❚❚" : "▶";
+  $("btnPlay").setAttribute("aria-label", `${state.demo ? "光のデモを" : ""}${state.playing ? "一時停止" : "再生"}`);
+}
 async function play() {
-  if (!state.buffer || state.playing) return;
-  const ac = ctx();
+  if (!hasPlayback() || state.playing) return;
+  if (state.offset >= duration()) state.offset = 0;
+  if (state.demo) {
+    state.startedAt = performance.now() / 1000; state.playing = true;
+    state.lastT = state.offset - 0.001; updatePlayButton(); return;
+  }
+  const buffer = state.buffer, ac = ctx();
   if (ac.state !== "running") { try { await ac.resume(); } catch (_) {} }
   if (ac.state !== "running") { setStatus("音声を開始できません（ブラウザにより一時停止されています）。もう一度 ▶ を押してください"); return; }
-  if (state.playing) return; // resume 待ちの間に既に再生開始していたら二重に開始しない
+  if (state.playing || state.demo || state.buffer !== buffer) return; // resume待ちの間の読込・デモ復帰・二重再生を除く
   const src = ac.createBufferSource(); src.buffer = state.buffer; src.connect(ac.destination);
-  src.onended = () => { if (state.playing && now() >= state.buffer.duration - 0.05) { stop(); state.offset = 0; } };
+  src.onended = () => { if (state.source === src && state.playing && now() >= buffer.duration - 0.05) { stop(); state.offset = 0; } };
   state.startedAt = ac.currentTime; src.start(0, state.offset); state.source = src; state.playing = true; resetAudition();
-  $("btnPlay").textContent = "❚❚";
+  updatePlayButton();
   // 再生開始位置より前の Intent は捨てる
   state.lastT = state.offset;
 }
 function stop() {
   if (state.source) { try { state.source.stop(); } catch (_) {} state.source.disconnect(); state.source = null; }
   if (state.playing) state.offset = now();
-  state.playing = false; $("btnPlay").textContent = "▶";
+  state.playing = false; updatePlayButton();
 }
 function seedActivePoints(t) {
   if (!state.intents) return;
   for (const d of state.intents.discrete) if (d.intent === "point" && d.t <= t && t < d.t + d.dur) { ink.receive(d, t); rig.receive(d, t); }
 }
-function seek(t) { const was = state.playing; stop(); state.offset = Math.max(0, Math.min(state.buffer ? state.buffer.duration : 0, t)); ink.reset(); rig.reset(); rig.pointMode = !!state.intents?.discrete.some((d) => d.intent === "point"); seedActivePoints(state.offset); state.lastT = state.offset; if (was) play(); drawTimeline(); }
+function seek(t) { const was = state.playing; stop(); state.offset = Math.max(0, Math.min(duration(), t)); ink.reset(); rig.reset(); rig.pointMode = !!state.intents?.discrete.some((d) => d.intent === "point"); seedActivePoints(state.offset); state.lastT = state.offset; if (was) play(); drawTimeline(); }
 $("btnPlay").addEventListener("click", () => (state.playing ? stop() : play()));
-window.addEventListener("keydown", (e) => { if (e.code === "Space" && !["INPUT", "SELECT", "BUTTON", "TEXTAREA"].includes(document.activeElement.tagName)) { e.preventDefault(); state.playing ? stop() : play(); } });
+window.addEventListener("keydown", (e) => { if (e.code === "Space" && !["INPUT", "SELECT", "BUTTON", "TEXTAREA", "SUMMARY"].includes(document.activeElement.tagName)) { e.preventDefault(); state.playing ? stop() : play(); } });
 window.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.focus) setFocus(false); });
 $("btnNextEvent").addEventListener("click", () => {
-  if (!state.intents || !state.buffer) return;
+  if (!state.intents || !hasPlayback()) return;
   const next = state.intents.discrete.find((d) => d.intent !== "pulse" && d.t > now() + 0.05);
   if (!next) { setStatus("この先に反応はありません"); return; }
   seek(next.t);
@@ -223,7 +251,8 @@ function pushLog(d) { logItems.unshift(`<b>${fmt(d.t)}</b> ${d.intent} @${[].con
 
 function frame() {
   requestAnimationFrame(frame);
-  if (!state.buffer) return;
+  if (!hasPlayback()) return;
+  if (state.demo && state.playing && now() >= duration()) seek(0);
   const latency = (parseFloat($("latencyMs").value) || 0) / 1000;
   const t = now() + latency;
   const it = state.intents;
@@ -231,7 +260,7 @@ function frame() {
   const palName = it ? paletteNameAt(it, t) : null;
   const surface = it && palName && it.palettes[palName] ? it.palettes[palName].surface : null;
   if (palName && $("paletteRow").dataset.current !== palName) renderPalette(palName);
-  if (it && state.playing && $("audition").checked) scheduleAudition(it, t);
+  if (it && state.playing && !state.demo && $("audition").checked) scheduleAudition(it, t);
   if (it && state.playing && t > state.lastT) {
     const suppress = $("suppressStrobe").checked;
     for (let d of discreteBetween(it, state.lastT, t)) {
@@ -242,7 +271,8 @@ function frame() {
     }
     state.lastT = t;
   }
-  if (state.view === "stage3d") stage3d.frame(t, { playing: state.playing });
+  if ($("preview").hidden) { /* 設定中も音源時計と時間軸は維持し、隠れたcanvasは描かない。 */ }
+  else if (state.view === "stage3d") stage3d.frame(t, { playing: state.playing });
   else if (state.view === "exp") exp.frame(t, { playing: state.playing });
   else {
     if (state.view !== "rig") ink.frame(t, cont, surface);
@@ -283,6 +313,24 @@ function resetAudition() { auditionScheduled = new Set(); auditionUntil = -1; }
 
 // ---------- 時間軸 ----------
 const tl = $("timeline");
+const seekInput = $("seek");
+let scrubbing = false, resumeAfterScrub = false;
+seekInput.addEventListener("pointerdown", () => {
+  if (!hasPlayback()) return;
+  scrubbing = true; resumeAfterScrub = state.playing;
+  if (resumeAfterScrub) stop();
+});
+seekInput.addEventListener("input", () => { if (hasPlayback()) seek(Number(seekInput.value)); });
+function finishScrub() {
+  if (!scrubbing) return;
+  scrubbing = false;
+  const resume = resumeAfterScrub; resumeAfterScrub = false;
+  if (resume) play();
+}
+seekInput.addEventListener("change", finishScrub);
+seekInput.addEventListener("blur", finishScrub);
+window.addEventListener("pointerup", finishScrub);
+window.addEventListener("pointercancel", finishScrub);
 function drawTimeline() {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const w = Math.floor(tl.clientWidth * dpr), h = Math.floor(tl.clientHeight * dpr);
@@ -293,7 +341,12 @@ function drawTimeline() {
   const ft = state.ft;
   if (ft) {
     // 区切り帯
-    ft.sections.forEach((s, k) => { c.fillStyle = k % 2 ? "rgba(236,230,218,0.08)" : "rgba(236,230,218,0.04)"; c.fillRect(x(s.start), 0, x(s.end) - x(s.start), h); c.fillStyle = "#a39d92"; c.font = `${10 * dpr}px system-ui`; c.fillText(s.label, x(s.start) + 4 * dpr, 12 * dpr); });
+    ft.sections.forEach((s, k) => {
+      c.fillStyle = k % 2 ? "rgba(236,230,218,0.08)" : "rgba(236,230,218,0.04)";
+      c.fillRect(x(s.start), 0, x(s.end) - x(s.start), h);
+      c.fillStyle = "#a39d92"; c.font = `${10 * dpr}px system-ui`;
+      if (c.measureText(s.label).width + 8 * dpr <= Math.min(w, x(s.end)) - x(s.start)) c.fillText(s.label, x(s.start) + 4 * dpr, 12 * dpr);
+    });
     // loudness 波形
     c.fillStyle = "rgba(236,230,218,0.35)";
     const L = ft.curves.loudness, step = Math.max(1, Math.floor(L.length / w));
@@ -320,29 +373,41 @@ function drawTimeline() {
   }
   const t = now();
   c.fillStyle = "#f5b400"; c.fillRect(x(t) - 1, 0, 2 * dpr, h);
+  if (!scrubbing) seekInput.value = String(t);
+  const valueText = `${fmt(t)} / ${fmt(dur)}`;
+  if (seekInput.getAttribute("aria-valuetext") !== valueText) seekInput.setAttribute("aria-valuetext", valueText);
 }
-tl.addEventListener("click", (e) => { if (!state.buffer) return; const r = tl.getBoundingClientRect(); seek(((e.clientX - r.left) / r.width) * state.buffer.duration); });
 window.addEventListener("resize", drawTimeline);
 
 // ---------- 入力 ----------
-$("btnSample").addEventListener("click", async () => {
+async function loadSample({ autoplay = false } = {}) {
+  if (ui.sourceBusy) return;
   // Safari対策: AudioContextの生成・resume()はユーザー操作から同期的に呼ばないと
   // 「無音のまま一時停止状態で固まる」ことがある。await の手前で必ず先に呼ぶ。
   ctx();
+  setSourceBusy(true);
   try {
     setStatus("サンプル曲を読み込み中…");
     const [audioRes, ftRes] = await Promise.all([fetch("../samples/gensan-extend.mp3"), fetch("../samples/gensan-extend.features.json")]);
+    if (!audioRes.ok) throw new Error("サンプル音源を取得できません。もう一度お試しください");
+    if (autoplay || $("presetSelect").value === "presets/mapping-piano-notes.json") {
+      $("presetSelect").value = "presets/mapping-drums-only.json";
+      await loadPreset($("presetSelect").value);
+    }
     await loadAudio(await audioRes.arrayBuffer(), "gensan-extend.mp3");
     if (ftRes.ok) { setFeatures(await ftRes.json()); setStatus(`gensan-extend.mp3 — Python版の解析JSONを使用（analysis/analyze.py）`); }
     else await analyzeInBrowser();
-    if ($("presetSelect").value === "presets/mapping-piano-notes.json") {
-      $("presetSelect").value = "presets/mapping-kick-only.json";
-      await loadPreset($("presetSelect").value);
-    }
+    showLoadedPreview();
+    if (autoplay) { await play(); if (state.playing) setStatus("音楽付きデモ — gensan-extend.mp3"); }
   } catch (err) { setStatus("サンプルの読み込みに失敗: " + err.message); }
-});
+  finally { setSourceBusy(false); }
+}
+$("btnSample").addEventListener("click", () => loadSample());
+$("btnDemoMusic").addEventListener("click", () => loadSample({ autoplay: true }));
+$("btnLightDemo").addEventListener("click", () => startLightDemo());
 $("btnPianoSample").addEventListener("click", async () => {
   ctx();
+  setSourceBusy(true);
   try {
     setStatus("B曲のピアノ候補を読み込み中…");
     const [audioRes, ftRes] = await Promise.all([fetch("../samples/B.mp3"), fetch("../samples/B-piano.features.v2.json")]);
@@ -355,18 +420,30 @@ $("btnPianoSample").addEventListener("click", async () => {
     setFeatures(ft, { detectDrums: false });
     setView("rig");
     setStatus("B.mp3 — 推定ピアノ単音493件。音高→左右位置、モデル強度＋原曲の相対音量→光量");
+    showLoadedPreview();
   } catch (err) { setStatus("B曲の読み込みに失敗: " + err.message); }
+  finally { setSourceBusy(false); }
 });
 $("fileAudio").addEventListener("change", async (e) => {
   ctx(); // 同上（Safari対策）
   const f = e.target.files[0]; if (!f) return;
-  await loadAudio(await f.arrayBuffer(), f.name);
-  await analyzeInBrowser();
+  setSourceBusy(true);
+  try {
+    setStatus(`${f.name} を読み込み中…`);
+    await loadAudio(await f.arrayBuffer(), f.name);
+    await analyzeInBrowser();
+    setStatus(`${f.name} — 解析が完了しました`);
+    showLoadedPreview();
+  } catch (err) { setStatus("音源を読み込めません: " + err.message); }
+  finally { setSourceBusy(false); }
 });
 $("fileFeatures").addEventListener("change", async (e) => { const f = e.target.files[0]; if (!f) return; try { setFeatures(JSON.parse(await f.text())); } catch (err) { alert("JSONを読めません: " + err.message); } });
 $("presetSelect").addEventListener("change", (e) => loadPreset(e.target.value));
 $("fileMapping").addEventListener("change", async (e) => { const f = e.target.files[0]; if (!f) return; try { setMapping(JSON.parse(await f.text())); } catch (err) { alert("JSONを読めません: " + err.message); } });
-document.querySelectorAll(".views .view").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
+document.querySelectorAll(".views .view").forEach((b) => b.addEventListener("click", () => {
+  setView(b.dataset.view);
+  if (phoneMedia.matches) { ui.settingsOpen = false; syncResponsiveUI(); }
+}));
 function setView(v) {
   state.view = v;
   document.querySelectorAll(".views .view").forEach((b) => { const on = b.dataset.view === v; b.classList.toggle("active", on); b.setAttribute("aria-selected", on); });
@@ -378,7 +455,7 @@ function setView(v) {
   updateStageGuide();
 }
 function updateStageGuide() {
-  $("stageGuide").hidden = !state.focus && state.view !== "stage3d";
+  $("stageGuide").hidden = state.demo || !state.buffer || (!state.focus && !compactMedia.matches && state.view !== "stage3d");
   if (state.view === "stage3d") {
     $("stageGuideTitle").textContent = "舞台（3D）";
     $("stageGuideText").textContent = "転がし＝キック（白青）／SS＝スネア（橙）／バトンのLEDバー20本＝ハイハット（金・表裏でバーが変わる）。γ と同じ光の塗り。ピアノ単音と戻りは未対応。ドラッグで見回し。";
@@ -398,7 +475,7 @@ function updateStageGuide() {
     : "再生位置と描画を同期して確認できます。時間軸を押すと移動します。";
 }
 function setFocus(on) {
-  if (on && !state.buffer) return;
+  if (on && !hasPlayback()) return;
   state.focus = on;
   ink.focus = on;
   document.body.classList.toggle("focus-mode", on);
@@ -407,9 +484,62 @@ function setFocus(on) {
   $("stageGuide").hidden = !on;
   if (on) setView("exp");
   updateStageGuide();
+  syncResponsiveUI();
   requestAnimationFrame(drawTimeline);
 }
 $("btnFocus").addEventListener("click", () => setFocus(!state.focus));
+
+// ---------- スマホ・タブレット（既存の入力と音源時計を共有する） ----------
+function syncResponsiveUI() {
+  const phone = phoneMedia.matches, compact = compactMedia.matches;
+  if (phone && state.focus) { state.focus = false; ink.focus = false; }
+  document.body.classList.toggle("phone-layout", phone);
+  document.body.classList.toggle("compact-layout", compact);
+  document.body.classList.toggle("focus-mode", state.focus);
+  $("btnFocus").hidden = phone;
+  $("btnFocus").textContent = state.focus ? "編集へ戻る" : "出力を見る";
+  $("btnFocus").setAttribute("aria-pressed", String(state.focus));
+  $("btnSettings").hidden = !phone;
+  $("btnSettings").textContent = ui.settingsOpen ? "映像を見る" : "設定";
+  $("btnSettings").setAttribute("aria-expanded", String(ui.settingsOpen));
+  $("settings").hidden = phone ? !ui.settingsOpen : state.focus;
+  $("preview").hidden = phone && ui.settingsOpen;
+  $("settingsNav").hidden = !compact;
+  for (const panel of document.querySelectorAll(".side .panel")) panel.hidden = compact && panel.id !== ui.panel;
+  for (const button of $("settingsNav").querySelectorAll("button")) button.setAttribute("aria-pressed", String(button.dataset.panel === ui.panel));
+  updateStageGuide();
+  requestAnimationFrame(drawTimeline);
+}
+function showLoadedPreview() {
+  if (phoneMedia.matches) { ui.settingsOpen = false; syncResponsiveUI(); }
+}
+function setSourceBusy(busy) {
+  ui.sourceBusy = busy;
+  for (const id of ["btnSample", "btnPianoSample", "btnLightDemo", "btnDemoMusic", "fileAudio"]) $(id).disabled = busy;
+  $("fileFeatures").disabled = busy || state.demo;
+  $("btnDemoMusic").textContent = busy ? "読込中…" : "音楽も再生";
+  $("panelSource").setAttribute("aria-busy", String(busy));
+  if (!busy) $("progress").hidden = true;
+}
+$("btnSettings").addEventListener("click", () => { ui.settingsOpen = !ui.settingsOpen; syncResponsiveUI(); });
+$("btnChooseSource").addEventListener("click", () => {
+  ui.settingsOpen = true; ui.panel = "panelSource";
+  if (state.focus) setFocus(false);
+  syncResponsiveUI(); $("settings").scrollTop = 0; $("btnSample").focus();
+});
+for (const button of $("settingsNav").querySelectorAll("button")) button.addEventListener("click", () => {
+  ui.panel = button.dataset.panel; syncResponsiveUI(); $("settings").scrollTop = 0;
+});
+for (const [id, direction] of [["btnLatencyMinus", -1], ["btnLatencyPlus", 1]]) $(id).addEventListener("click", () => {
+  const input = $("latencyMs");
+  if (!Number.isFinite(input.valueAsNumber)) input.value = "0";
+  direction > 0 ? input.stepUp() : input.stepDown();
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+});
+phoneMedia.addEventListener("change", syncResponsiveUI);
+compactMedia.addEventListener("change", syncResponsiveUI);
+window.visualViewport?.addEventListener("resize", () => requestAnimationFrame(drawTimeline));
+new ResizeObserver(() => requestAnimationFrame(drawTimeline)).observe($("timeline"));
 
 // ---------- 書き出し ----------
 function download(name, obj) { const blob = new Blob([JSON.stringify(obj)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
@@ -424,7 +554,7 @@ $("fileGammaTemplate").addEventListener("change", async (e) => {
     const sel = $("gammaScene"); sel.innerHTML = ""; sel.hidden = false;
     for (const s of info.design.scenes || []) { const o = document.createElement("option"); o.value = s.id; o.textContent = s.name || s.id; sel.appendChild(o); }
     $("gammaSummary").textContent = `${info.kind === "show" ? "ショーJSON" : "照明デザインJSON"}: 灯体 ${(info.design.rig && info.design.rig.fixtures || []).length} 台・シーン ${(info.design.scenes || []).length}`;
-    $("btnExportGamma").disabled = !state.intents || state.intents.discrete.some((d) => d.intent === "point");
+    $("btnExportGamma").disabled = state.demo || !state.intents || state.intents.discrete.some((d) => d.intent === "point");
     if (state.intents?.discrete.some((d) => d.intent === "point")) $("gammaSummary").textContent += "。単音の位置指定はγ下書きへ未対応";
   } catch (err) { alert(err.message); state.gammaTemplate = null; }
 });
@@ -438,7 +568,34 @@ $("btnExportGamma").addEventListener("click", () => {
 
 // ---------- 共通 ----------
 function fmt(t) { if (!Number.isFinite(t)) return "0:00.0"; const m = Math.floor(t / 60), s = (t % 60).toFixed(1).padStart(4, "0"); return `${m}:${s}`; }
-function setStatus(s) { $("topStatus").textContent = s; }
+function setStatus(s) { $("topStatus").textContent = s; $("topStatus").title = s; $("settingsStatus").textContent = s; }
 function showProgress(p, text) { $("progress").hidden = false; $("progressBar").style.width = `${Math.round(p * 100)}%`; $("progressText").textContent = text; }
-loadPreset($("presetSelect").value);
-drawTimeline();
+async function startLightDemo() {
+  if (ui.sourceBusy) return;
+  stop();
+  state.demo = true; state.buffer = null; state.mono = null; state.stereo = null;
+  state.ft = createDemoFeatures(); state.ftBase = null; state.intents = null;
+  state.fileName = ""; state.offset = 0.06; state.lastT = -1;
+  ink.reset(); rig.reset(); exp.reset(); stage3d.reset();
+  ink.pointMode = rig.pointMode = false;
+  for (const id of ["facts", "sensRow", "pianoNotice", "emptyState"]) $(id).hidden = true;
+  for (const id of ["btnExportFeatures", "btnExportIntents", "btnExportGamma", "btnNextEvent"]) $(id).disabled = true;
+  $("demoBanner").hidden = false;
+  $("btnPlay").disabled = false; $("btnFocus").disabled = false;
+  $("seek").disabled = false; $("seek").max = String(duration());
+  $("tDur").textContent = fmt(duration()); $("tempoBox").textContent = "120 BPM";
+  $("presetSelect").value = "presets/mapping-drums-only.json";
+  setSourceBusy(true);
+  setView("exp"); showLoadedPreview();
+  setStatus("光のデモ · 無音 — 「音楽も再生」でサンプル曲が流れます");
+  try {
+    await loadPreset($("presetSelect").value);
+    // OSの低モーション指定は自動再生にも反映。通常は開いた直後から反復する。
+    if (!matchMedia("(prefers-reduced-motion: reduce)").matches) play();
+    else updatePlayButton();
+  } catch (err) { setStatus("デモの準備に失敗しました。「光だけのデモに戻る」で再試行できます: " + err.message); }
+  finally { setSourceBusy(false); drawTimeline(); }
+}
+if (compactMedia.matches) $("stageGuide").open = false;
+syncResponsiveUI();
+startLightDemo();
