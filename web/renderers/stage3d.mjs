@@ -1,6 +1,6 @@
-// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16・§17。
+// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜18。
 // γの幾何ブロックは _delegation/gamma-src-2026-10-01/stage-first-person.js から無改変抽出。
-import { DRUM_WINDOW } from "./experience.mjs?v=20261002a";
+import { DRUM_WINDOW } from "./experience.mjs?v=20261002b";
 
 const W = 12, D = 9, H = 8;
 // stage-first-person.js L872-875 / L903-910 の既定値。DOMパネル依存は持ち込まない。
@@ -316,9 +316,9 @@ function drawBox(ctx, p, length, thickness, fill, stroke) {
 
 /** 空中の光は実際の狙い先で切る。床の斜入射楕円の中心とは別の幾何。
  * γのpaintBeamsを使い続け、距離×tan(照射角/2)の幅と光軸に直交する面だけここで渡す。 */
-function beamOf(fixture, light, marker, dims, engine) {
+function beamOf(fixture, light, source, dims, engine) {
   const aim = light.path.a;
-  const from = { x: (marker.u - 0.5) * dims.W, y: marker.v * dims.D, z: marker.h };
+  const from = { ...source };
   const to = { x: (aim.u - 0.5) * dims.W, y: aim.v * dims.D, z: aim.hM };
   const delta = { x: to.x - from.x, y: to.y - from.y, z: to.z - from.z };
   const length = Math.hypot(delta.x, delta.y, delta.z);
@@ -344,8 +344,30 @@ export function beamFacingView(beam, view) {
   return { ...beam, eb: { x: b.x * scale, y: b.y * scale, z: b.z * scale } };
 }
 
-/** γの複製で照明モデルを組み、音アタリ側で照射と自発光を分ける（DOM不要）。 */
-export function buildStageModel(design, rig, { overlay, plan, engine }) {
+/** γの無改変模型を仕込みへ置く。床置きだけx軸回り180°で土台を上向きにする。 */
+export function fixtureBodyGeometry(fixture, light, marker, dims, body) {
+  if (fixture.fixtureType === "led-bar") return null;
+  const source = { x: (marker.u - 0.5) * dims.W, y: marker.v * dims.D, z: marker.h };
+  const a = light.path.a, aim = { x: (a.u - 0.5) * dims.W, y: a.v * dims.D, z: a.hM };
+  const make = fixture.kind === "moving" ? body.movingHead : body.parCan;
+  if (fixture.mount.type !== "floor") return make(source, aim, { scale: 1 });
+  const geom = make({ x: 0, y: 0, z: 0 }, { x: aim.x - source.x, y: source.y - aim.y, z: -aim.z }, { scale: 1 });
+  const rotate = (value) => {
+    if (Array.isArray(value)) return value.map(rotate);
+    if (!value || typeof value !== "object") return value;
+    if ([value.x, value.y, value.z].every(Number.isFinite)) return { x: source.x + value.x, y: source.y - value.y, z: -value.z };
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, rotate(v)]));
+  };
+  const standing = rotate(geom);
+  standing.dir = { x: geom.dir.x, y: -geom.dir.y, z: -geom.dir.z };
+  standing.pan = Math.atan2(standing.dir.x, standing.dir.y);
+  standing.tilt = Math.acos(clamp(-standing.dir.z, -1, 1));
+  return standing;
+}
+const bodyVertices = (g) => [...g.base.top, ...g.base.bottom, ...g.yoke.bar, ...g.yoke.arms.flat(), ...g.head.front, ...g.head.back, ...g.head.rails.flat()];
+
+/** γの複製で照明モデルを組み、音アタリ側で模型のレンズ位置と照射を接続する（DOM不要）。 */
+export function buildStageModel(design, rig, { overlay, plan, engine, body }) {
   const model = overlay.build(design, design.scenes[0].id, plan);
   if (!model) return null;
   const floorZ = (engine && engine.FLOOR_FIXTURE_Z) ?? 0.3;
@@ -355,8 +377,14 @@ export function buildStageModel(design, rig, { overlay, plan, engine }) {
     if (!fixture) continue;
     if (fixture.mount.type === "floor") f.h = floorZ;
     const led = fixture.fixtureType === "led-bar";
-    f.beam = led ? null : beamOf(fixture, lights[f.id], f, model.dims, engine);
+    f.body = fixtureBodyGeometry(fixture, lights[f.id], f, model.dims, body);
+    f.bodyVertices = f.body ? bodyVertices(f.body) : [];
+    f.beam = led ? null : beamOf(fixture, lights[f.id], f.body.lens, model.dims, engine);
     if (led || fixture.mount.type === "floor") f.pool = null;
+    else {
+      const lens = f.body.lens;
+      f.pool = overlay.poolOf(fixture, lights[f.id], { ...f, u: lens.x / model.dims.W + 0.5, v: lens.y / model.dims.D, h: lens.z }, model.dims, engine);
+    }
   }
   return model;
 }
@@ -366,11 +394,12 @@ export class Stage3dRenderer {
     this.canvas = canvas; this.ctx = canvas.getContext("2d"); this.data = null;
     this.rig = createDefaultRig(); this.design = createStageDesign(this.rig);
     this.render = window.SHOSAI_LIGHT_RENDER;
+    this.body = window.FIXTURE_BODY;
     const overlay = window.SHOSAI_STAGE_LIGHT_CUE_OVERLAY;
     const plan = window.SHOSAI_STAGE_LIGHTING_PLAN_OVERLAY;
-    if (!window.RIG_ENGINE || !this.render || !overlay || !plan) throw new Error("舞台の描画部品を読み込めません。ページを再読み込みしてください");
+    if (!window.RIG_ENGINE || !this.render || !overlay || !plan || !this.body) throw new Error("舞台の描画部品を読み込めません。ページを再読み込みしてください");
     // 幾何はこの1回だけ。setData/視点/時刻の変更ではbuildを呼び直さない。
-    this.model = buildStageModel(this.design, this.rig, { overlay, plan, engine: window.RIG_ENGINE });
+    this.model = buildStageModel(this.design, this.rig, { overlay, plan, engine: window.RIG_ENGINE, body: this.body });
     this.pools = new Map(this.model.fixtures.filter((f) => f.pool).map((f) => [f.id, f.pool]));
     this.beams = new Map(this.model.fixtures.filter((f) => f.beam).map((f) => [f.id, f.beam]));
     this.setViewpoint("house-center");
@@ -407,15 +436,23 @@ export class Stage3dRenderer {
     fillPoly(ctx, floor, "#1A202B", "#2C2C30", 1);
     for (const bar of this.rig.trusses) line3(ctx, toWorld(0, bar.v, W, D, bar.h), toWorld(1, bar.v, W, D, bar.h), "#2C2C30", 2);
   }
-  drawFixtures(levels, { litOnly = false } = {}) {
+  drawFixtures(levels) {
+    const P = cueLightProjector();
     const fixtures = this.model.fixtures.map((marker) => ({ marker, point: toWorld(marker.u, marker.v, W, D, marker.h) }))
       .sort((a,b) => toCamera(b.point).z - toCamera(a.point).z);
     for (const { marker, point } of fixtures) {
       const value = levels.get(marker.id), led = marker.id.startsWith("led-bar-");
       const alpha = value.level / 100;
-      if (litOnly && !(alpha > 0)) continue;
-      const fill = alpha > 0 ? colorAtLevel(value.color, alpha) : "#080C13";
-      drawBox(this.ctx, { ...point, y: Math.max(led ? 0.03 : 0.12, point.y) }, led ? 0.5 : 0.24, led ? 0.06 : 0.24, fill, alpha > 0 ? fill : "#2C2C30");
+      if (led) {
+        const fill = alpha > 0 ? colorAtLevel(value.color, alpha) : "#080C13";
+        drawBox(this.ctx, { ...point, y: Math.max(0.03, point.y) }, 0.5, 0.06, fill, alpha > 0 ? fill : "#2C2C30");
+      } else if (marker.body && marker.bodyVertices.every((p) => P(p))) {
+        const pivot = marker.body.pivot;
+        const depth = toCamera({ x: pivot.x, y: pivot.z, z: pivot.y - D / 2 }).z;
+        this.body.draw(this.ctx, P, marker.body, { color: value.color, lit: alpha,
+          beamDeg: this.design.scenes[0].cue.lights[marker.id].beamDeg,
+          px: focal / depth, appearance: "white-line" });
+      }
     }
   }
   frame(t, { playing = false } = {}) {
@@ -428,10 +465,9 @@ export class Stage3dRenderer {
     this.drawShell();
     this.render.paintPools(ctx, pools, P, opts);
     this.render.paintBeams(ctx, beams, P, opts);
-    this.drawFixtures(levels);
     this.render.paintWorkLight(ctx, pools, P, { ...opts, floorClip: clipCueLightSurfaces });
-    this.drawFixtures(levels, { litOnly: true });   // 暗幕の上に、点いている灯体（LEDバーの自発光）だけ描き直す（γ の redrawLitPieces と同じ順）
     this.render.paintBeams(ctx, beams, P, opts);
+    this.drawFixtures(levels);   // γと同じく光の後に筐体を重ね、消灯中も形と向きを残す。
     // playingは共通描画器の契約として受け取る。時刻以外で光を変えない。
   }
 }

@@ -20,7 +20,7 @@ oto-atari/
 ├── web/
 │   ├── lib/       dsp.mjs（FFT等）/ analyze-core.mjs（JS版解析器）/ mapping-engine.mjs（規則→Intent）/ validate.mjs
 │   ├── renderers/ ink.mjs（塗料）/ rig.mjs（照明図）/ experience.mjs（体験表示・時刻決定型）/ stage3d.mjs（舞台3D）/ gamma-export.mjs（γ下書き）/ zones.mjs（zone→幾何）
-│   ├── vendor/gamma/ γの照明4モジュール（2026-10-01の複製・本文無改変）
+│   ├── vendor/gamma/ γの照明4モジュール＋灯体モデル（本文無改変）
 │   └── index.html / app.js / style.css
 ├── presets/       既存のv1割り振り / mapping-piano-notes.json（v2）
 ├── samples/       gensan-extend.mp3＋解析結果 / B.mp3＋B-piano.features.v2.json
@@ -68,6 +68,8 @@ node tests/run.mjs                       # JS解析器（合成信号）・割�
 候補は元MIDIの確定音符ではない。モデル強度は一音の音圧や元MIDIベロシティではなく、音抜けの改善と精度測定は未実施。B曲では打楽器を再判定せず、BPMの確からしさ8%なので拍目盛も抑えている。位置指定の光点はγ下書きに未対応のため、該当割り振りでは書き出しを停止する。
 
 「舞台」では、単音のアタックごとに8台の吊りスポットが点灯する。低音は左、高音は右。打点ですぐ光り、0.6秒で消える。別の音域の和音は同時に光り、同じスポットへ重なる音は強い方を採る。保持時間の長い音も舞台では短い光にするが、元の音価・打点は維持する。「次の反応」で停止したまま点灯を確認できる。
+
+灯体は舞台スケッチγの共有部品 `stage-fixture-body.js`（e199725版）を無改変で使用。転がしは土台・ヨーク・ヘッドのあるムービング、SSと吊りスポットは筒型の固定灯で表示する。音アタリ側で床置きの向きとレンズからの照射を接続し、LEDバーは箱の自発光を維持する。
 
 再生成する場合は `analysis/merge_piano_notes.py FEATURES NOTES AUDIO OUTPUT` を実行する。音源と二つの解析JSONのSHA-256を照合し、一致しなければ止まる。元データは `knowledge/research/audio-stem-feasibility-2026-09-28/test-tracks-20260928/results/` に保存されている。
 
