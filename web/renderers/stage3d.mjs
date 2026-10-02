@@ -1,6 +1,6 @@
-// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜19。
+// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜20。
 // γの幾何ブロックは _delegation/gamma-src-2026-10-01/stage-first-person.js から無改変抽出。
-import { DRUM_WINDOW } from "./experience.mjs?v=20261002c";
+import { DRUM_WINDOW } from "./experience.mjs?v=20261002d";
 
 const W = 12, D = 9, H = 8;
 const FIXTURE_OUTLINE_COLOR = "#808080";
@@ -214,6 +214,10 @@ export const STAGE_POINT_STYLE = Object.freeze({
   count: 8, uStart: 0.1, uEnd: 0.9, barV: 0.32, barHeight: 6.5, aimV: 0.55,
   beamDeg: 18, softness: 2, color: "#b7f9ec", windowSec: 0.6, decayPower: 1.8,
 });
+const STAGE_LED_STYLE = Object.freeze({
+  length: 0.5, thickness: 0.06, emitterRatio: 0.88, coreWidth: 0.028,
+  haloRadius: 0.18, body: "#080c13", edge: "#2c2c30", core: "#fff2d6",
+});
 const fixtureColor = (f) => f.soundRole === "point" ? STAGE_POINT_STYLE.color : COLORS[f.mount.type];
 
 /** sample-lightdesign.json mid-f-041〜052 の mount/種別と、確定したLED列。 */
@@ -244,7 +248,7 @@ export function createStageDesign(rig = createDefaultRig()) {
   const lights = {};
   for (const f of rig.fixtures) {
     const m = f.mount, point = f.soundRole === "point";
-    // 転がしは舞台奥から客席側へ。LEDは箱の自発光だけで、照射面を持たない。
+    // 転がしは舞台奥から客席側へ。LEDは発光面と近傍のにじみだけで、照射面を持たない。
     const aim = m.type === "floor" ? { u: m.u, v: STAGE_LIGHT_STYLE.floorAimV, hM: STAGE_LIGHT_STYLE.floorAimHeight }
       : m.type === "side" ? { u: m.side === "shimote" ? 0.85 : 0.15, v: m.v, hM: 1.0 }
       : { u: m.u, v: point ? STAGE_POINT_STYLE.aimV : 0.5, hM: 0 };
@@ -270,7 +274,7 @@ export function fixtureLevelsAt(t, expData, rig) {
     if (!window || age < 0 || age >= window) continue;
     const strength = clamp(hit.level, 0, 1), remaining = 1 - age / window;
     const life = hit.tag === "kick" ? remaining ** 2.6 * strength
-      : hit.tag === "snare" ? remaining ** 1.5 * strength : remaining * (0.5 + 0.5 * strength);
+      : hit.tag === "snare" ? remaining ** 1.5 * strength : remaining ** 2 * (3 - 2 * remaining) * (0.5 + 0.5 * strength);
     const type = { kick: "floor", snare: "side", hat: "truss" }[hit.tag];
     const ids = hit.tag === "hat" ? new Set((hit.leds || []).filter((k) => Number.isInteger(k) && k >= 0 && k < 20).map((k) => `led-bar-${String(k + 1).padStart(2, "0")}`)) : null;
     for (const f of rig.fixtures) if (f.mount.type === type && (!ids || ids.has(f.id))) {
@@ -313,6 +317,41 @@ function drawBox(ctx, p, length, thickness, fill, stroke) {
     .map((ids) => ids.map((i) => points[i]));
   faces.sort((a,b) => b.reduce((s,p) => s + toCamera(p).z, 0) - a.reduce((s,p) => s + toCamera(p).z, 0));
   for (const face of faces) fillPoly(ctx, face, fill, stroke, 1);
+}
+
+/** LEDの発光面と、その近傍の拡散光。画素を蓄積せず、その時刻の光量だけで描く。 */
+function drawLedBar(ctx, p, color, level) {
+  const s = STAGE_LED_STYLE, life = clamp(level, 0, 1);
+  drawBox(ctx, p, s.length, s.thickness, s.body, s.edge);
+  if (!(life > 0)) return;
+  const ends = clipPolyNear([-1, 1].map((sign) => toCamera({ ...p, x: p.x + sign * s.length * s.emitterRatio / 2 })));
+  if (ends.length !== 2) return;
+  const [a, b] = ends.map(toScreen), length = Math.hypot(b.x - a.x, b.y - a.y);
+  if (!(length > 0)) return;
+  const px = focal / Math.max(NEAR, (ends[0].z + ends[1].z) / 2);
+  const core = clamp(s.coreWidth * px, 0.9, 3);
+  const halo = clamp(s.haloRadius * px, 2.5, 12) * (0.65 + 0.35 * Math.sqrt(life));
+  const rgba = (hex, opacity) => {
+    const rgb = parseInt(hex.slice(1), 16);
+    return `rgba(${rgb >> 16 & 255},${rgb >> 8 & 255},${rgb & 255},${opacity})`;
+  };
+  ctx.save();
+  ctx.translate((a.x + b.x) / 2, (a.y + b.y) / 2);
+  ctx.rotate(Math.atan2(b.y - a.y, b.x - a.x));
+  ctx.globalCompositeOperation = "screen";
+  const glow = (rx, ry, alpha) => {
+    ctx.save(); ctx.scale(rx, ry);
+    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+    for (const [at, weight] of [[0, 1], [0.3, 0.5], [0.65, 0.125], [1, 0]]) gradient.addColorStop(at, rgba(color, alpha * life * weight));
+    ctx.fillStyle = gradient; ctx.beginPath(); ctx.arc(0, 0, 1, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  };
+  glow(length / 2 + halo, halo, 0.36);
+  glow(length / 2 + halo * 0.2, core * 0.6 + halo * 0.22, 0.65);
+  ctx.strokeStyle = rgba(s.core, 0.95 * life);
+  ctx.lineWidth = core; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(-length / 2, 0); ctx.lineTo(length / 2, 0); ctx.stroke();
+  ctx.restore();
 }
 
 /** 空中の光は実際の狙い先で切る。床の斜入射楕円の中心とは別の幾何。
@@ -445,8 +484,7 @@ export class Stage3dRenderer {
       const value = levels.get(marker.id), led = marker.id.startsWith("led-bar-");
       const alpha = value.level / 100;
       if (led) {
-        const fill = alpha > 0 ? colorAtLevel(value.color, alpha) : "#080C13";
-        drawBox(this.ctx, { ...point, y: Math.max(0.03, point.y) }, 0.5, 0.06, fill, alpha > 0 ? fill : "#2C2C30");
+        drawLedBar(this.ctx, { ...point, y: Math.max(0.03, point.y) }, value.color, alpha);
       } else if (marker.body && marker.bodyVertices.every((p) => P(p))) {
         const pivot = marker.body.pivot;
         const depth = toCamera({ x: pivot.x, y: pivot.z, z: pivot.y - D / 2 }).z;
@@ -471,8 +509,4 @@ export class Stage3dRenderer {
     this.drawFixtures(levels);   // γと同じく光の後に筐体を重ね、消灯中も形と向きを残す。
     // playingは共通描画器の契約として受け取る。時刻以外で光を変えない。
   }
-}
-function colorAtLevel(hex, level) {
-  const value = parseInt(hex.slice(1), 16);
-  return `rgb(${[value >> 16 & 255, value >> 8 & 255, value & 255].map((v) => Math.round(v * level)).join(",")})`;
 }
