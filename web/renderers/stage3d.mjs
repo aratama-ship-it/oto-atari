@@ -1,6 +1,6 @@
-// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13。
+// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16・§17。
 // γの幾何ブロックは _delegation/gamma-src-2026-10-01/stage-first-person.js から無改変抽出。
-import { DRUM_WINDOW } from "./experience.mjs";
+import { DRUM_WINDOW } from "./experience.mjs?v=20261002a";
 
 const W = 12, D = 9, H = 8;
 // stage-first-person.js L872-875 / L903-910 の既定値。DOMパネル依存は持ち込まない。
@@ -165,7 +165,7 @@ let forward = { x: 0, y: 0, z: -1 }, right = { x: 1, y: 0, z: 0 }, up = { x: 0, 
   }
 
 // stage-first-person.js L3478-3494 clipCueLightFloor を基に、音アタリでは奥の壁の面も穴の範囲に含める
-// （γは床だけ。転がしの光だまりが奥壁（surface "back"）にあるため。式は同じ、面を2つ重ねるだけ）
+// （v0.5.0の奥壁照射用。現在はSSと単音スポットの床面が対象。式は同じ、面を2つ重ねるだけ）
   function clipCueLightSurfaces(maskCtx) {
     if (!maskCtx || !(W > 0) || !(D > 0)) return false;
     const floor = [
@@ -205,6 +205,15 @@ export const VIEWPOINTS = Object.freeze({
   "wing-shimote": Object.freeze({ x: -7, y: 1.6, z: 0, yaw: -90, pitch: -2 }),
 });
 const COLORS = Object.freeze({ floor: "#dbe8ff", side: "#ff7e30", truss: "#ffc04e" });
+export const STAGE_LIGHT_STYLE = Object.freeze({
+  floorBeamDeg: 54, floorAimV: 0.8, floorAimHeight: 3, floorSoftness: 8,
+  sideLowBeamDeg: 18, sideHighBeamDeg: 40, sideSoftness: 2,
+});
+export const STAGE_POINT_STYLE = Object.freeze({
+  count: 8, uStart: 0.1, uEnd: 0.9, barV: 0.32, barHeight: 6.5, aimV: 0.55,
+  beamDeg: 18, softness: 2, color: "#b7f9ec", windowSec: 0.6, decayPower: 1.8,
+});
+const fixtureColor = (f) => f.soundRole === "point" ? STAGE_POINT_STYLE.color : COLORS[f.mount.type];
 
 /** sample-lightdesign.json mid-f-041〜052 の mount/種別と、確定したLED列。 */
 export function createDefaultRig() {
@@ -212,30 +221,35 @@ export function createDefaultRig() {
   for (const v of [0.32, 0.68]) for (const side of ["shimote", "kamite"]) for (const h of [0.55, 2.4]) {
     const no = 41 + fixtures.length, low = h === 0.55;
     fixtures.push({ id: `mid-f-${String(no).padStart(3, "0")}`, no, name: `SS ${no}`,
-      mount: { type: "side", side, v, h }, kind: "fixed", beamDeg: low ? 10 : 28,
+      mount: { type: "side", side, v, h }, kind: "fixed", beamDeg: low ? STAGE_LIGHT_STYLE.sideLowBeamDeg : STAGE_LIGHT_STYLE.sideHighBeamDeg,
       fixtureType: low ? "led-par" : "profile-zoom", family: low ? "wash" : "profile", role: low ? "SS低段" : "SS高段" });
   }
   for (const [u, v] of [[0.3, 0.0667], [0.7, 0.0667], [0.0417, 0.0889], [0.9583, 0.0889]]) {
     const no = 41 + fixtures.length;
     fixtures.push({ id: `mid-f-${String(no).padStart(3, "0")}`, no, name: `転がし ${no}`,
-      mount: { type: "floor", u, v }, kind: "moving", beamDeg: 36, fixtureType: "moving-wash", family: "moving", role: "転がし" });
+      mount: { type: "floor", u, v }, kind: "moving", beamDeg: STAGE_LIGHT_STYLE.floorBeamDeg, fixtureType: "moving-wash", family: "moving", role: "転がし" });
   }
   for (let k = 0; k < 20; k++) fixtures.push({ id: `led-bar-${String(k + 1).padStart(2, "0")}`, no: 53 + k, name: `LEDバー ${k + 1}`,
     mount: { type: "truss", trussId: "bar-t-01", u: (k + 0.5) / 20 }, kind: "fixed", fixtureType: "led-bar", family: "led", beamDeg: 40, role: "吊り" });
-  return { trusses: [{ id: "bar-t-01", v: 0.5, h: 6.5, label: "照明バトン2" }], fixtures };
+  const p = STAGE_POINT_STYLE;
+  for (let k = 0; k < p.count; k++) fixtures.push({ id: `note-spot-${String(k + 1).padStart(2, "0")}`, no: 73 + k, name: `単音スポット ${k + 1}`,
+    mount: { type: "truss", trussId: "bar-note-01", u: p.uStart + (p.uEnd - p.uStart) * k / (p.count - 1) },
+    kind: "fixed", fixtureType: "profile-zoom", family: "profile", beamDeg: p.beamDeg, role: "吊り単音", soundRole: "point" });
+  return { trusses: [{ id: "bar-t-01", v: 0.5, h: 6.5, label: "照明バトン2" },
+    { id: "bar-note-01", v: p.barV, h: p.barHeight, label: "単音スポット用バトン" }], fixtures };
 }
 
 export function createStageDesign(rig = createDefaultRig()) {
   const lights = {};
   for (const f of rig.fixtures) {
-    const m = f.mount;
-    /* 転がし: 床置きから床を狙うと光が寝て薄い（2026-10-01 実測: キック時の床ROI 15.4 vs 無音 14.3）。
-       舞台の定番どおり奥の壁を下から照らす（surface "back"・高さ3m）＝キックで奥壁が白青く立ち上がる。 */
-    const aim = m.type === "floor" ? { u: m.u, v: 0, hM: 3.0 }
+    const m = f.mount, point = f.soundRole === "point";
+    // 転がしは舞台奥から客席側へ。LEDは箱の自発光だけで、照射面を持たない。
+    const aim = m.type === "floor" ? { u: m.u, v: STAGE_LIGHT_STYLE.floorAimV, hM: STAGE_LIGHT_STYLE.floorAimHeight }
       : m.type === "side" ? { u: m.side === "shimote" ? 0.85 : 0.15, v: m.v, hM: 1.0 }
-      : { u: m.u, v: 0.5, hM: 0 };
-    lights[f.id] = { on: true, level: 100, color: COLORS[m.type], surface: m.type === "floor" ? "back" : "floor", path: { kind: "still", a: aim },
+      : { u: m.u, v: point ? STAGE_POINT_STYLE.aimV : 0.5, hM: 0 };
+    lights[f.id] = { on: true, level: 100, color: fixtureColor(f), surface: m.type === "side" || point ? "floor" : "air", path: { kind: "still", a: aim },
       speed: "normal", periodSec: null, offsetSec: 0, levelTo: null, beamDegTo: null, beamDeg: f.beamDeg,
+      beamEdgeSoftness: point ? STAGE_POINT_STYLE.softness : m.type === "floor" ? STAGE_LIGHT_STYLE.floorSoftness : STAGE_LIGHT_STYLE.sideSoftness,
       gobo: "none", goboSoft: 6, goboSpin: 0, goboAngle: 0, strobe: null, shutter: null, glare: 1, groupId: null };
   }
   return { format: "shosai.light-design", stage: { ...STAGE_SIZE }, rig,
@@ -244,7 +258,7 @@ export function createStageDesign(rig = createDefaultRig()) {
 
 /** leds[] は0始まり。純粋関数: cue優先・未来の打点は不使用・重複はmax。 */
 export function fixtureLevelsAt(t, expData, rig) {
-  const levels = new Map(rig.fixtures.map((f) => [f.id, { level: 0, color: COLORS[f.mount.type] }]));
+  const levels = new Map(rig.fixtures.map((f) => [f.id, { level: 0, color: fixtureColor(f) }]));
   if (!expData || expData.cues.some((c) => c.type === "silence" && t >= c.t && t <= c.t + c.dur)) return levels;
   const hits = expData.hits;
   let lo = 0, hi = hits.length;
@@ -261,6 +275,19 @@ export function fixtureLevelsAt(t, expData, rig) {
     for (const f of rig.fixtures) if (f.mount.type === type && (!ids || ids.has(f.id))) {
       const value = levels.get(f.id); value.level = Math.max(value.level, life * 100);
     }
+  }
+  // アタックの時刻だけで短く点滅。音価が長い音にも光の保持は足さず、連打はそれぞれ再発火する。
+  const spots = rig.fixtures.filter((f) => f.soundRole === "point"), points = expData.points || [];
+  lo = 0; hi = points.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (points[mid].t < t - STAGE_POINT_STYLE.windowSec) lo = mid + 1; else hi = mid; }
+  for (let i = lo; spots.length && i < points.length; i++) {
+    const point = points[i]; if (point.t > t) break;
+    const age = t - point.t;
+    if (age < 0 || age >= STAGE_POINT_STYLE.windowSec) continue;
+    const slot = Math.min(spots.length - 1, Math.floor(clamp(finite(point.x, 0.5), 0, 1) * spots.length));
+    const life = (1 - age / STAGE_POINT_STYLE.windowSec) ** STAGE_POINT_STYLE.decayPower;
+    const value = levels.get(spots[slot].id);
+    value.level = Math.max(value.level, life * clamp(finite(point.level, 0), 0, 1) * 100);
   }
   return levels;
 }
@@ -287,10 +314,37 @@ function drawBox(ctx, p, length, thickness, fill, stroke) {
   for (const face of faces) fillPoly(ctx, face, fill, stroke, 1);
 }
 
-/** γの複製で照明モデルを組む（DOM不要・テスト対象）。
- *  転がし（床置き）: plan-overlay は marker.h=0 に置き、床狙いと平行になるので rig-engine.spotEllipse が null を返す。
- *  γ本体の fixtureWorld（rig-engine.js L238〜）は床置きの光源高さを FLOOR_FIXTURE_Z=0.3m にしているので、
- *  舞台側だけ同じ高さで pool を作り直す（vendor は変えない。Codex 指摘 2026-10-01）。 */
+/** 空中の光は実際の狙い先で切る。床の斜入射楕円の中心とは別の幾何。
+ * γのpaintBeamsを使い続け、距離×tan(照射角/2)の幅と光軸に直交する面だけここで渡す。 */
+function beamOf(fixture, light, marker, dims, engine) {
+  const aim = light.path.a;
+  const from = { x: (marker.u - 0.5) * dims.W, y: marker.v * dims.D, z: marker.h };
+  const to = { x: (aim.u - 0.5) * dims.W, y: aim.v * dims.D, z: aim.hM };
+  const delta = { x: to.x - from.x, y: to.y - from.y, z: to.z - from.z };
+  const length = Math.hypot(delta.x, delta.y, delta.z);
+  if (!(length > 0)) return null;
+  const axis = { x: delta.x / length, y: delta.y / length, z: delta.z / length };
+  const horizontal = Math.hypot(axis.x, axis.y);
+  const across = horizontal > 0 ? { x: -axis.y / horizontal, y: axis.x / horizontal, z: 0 } : { x: 1, y: 0, z: 0 };
+  const radiusM = engine.spotRadiusM(from, to, engine.beamDegOf(fixture, light));
+  const eb = { x: across.x * radiusM, y: across.y * radiusM, z: 0 };
+  const ea = { x: -axis.z * across.y * radiusM, y: axis.z * across.x * radiusM, z: (axis.x * across.y - axis.y * across.x) * radiusM };
+  return { from, to, c: to, ea, eb, radiusM, surface: "air", softness: light.beamEdgeSoftness };
+}
+
+/** γの光の筋は1枚の断面。光軸と視線に直交する幅を渡し、横から見ても細線にしない。
+ * 視点は{x:左右,y:高さ,z:舞台中央基準の奥行き}、光はγの座標系。元モデルは変えない。 */
+export function beamFacingView(beam, view) {
+  const a = { x: beam.to.x - beam.from.x, y: beam.to.y - beam.from.y, z: beam.to.z - beam.from.z };
+  const v = { x: view.x - beam.from.x, y: view.z + D / 2 - beam.from.y, z: view.y - beam.from.z };
+  const b = { x: a.y * v.z - a.z * v.y, y: a.z * v.x - a.x * v.z, z: a.x * v.y - a.y * v.x };
+  const size = Math.hypot(b.x, b.y, b.z);
+  if (size < 1e-8) return beam;
+  const scale = beam.radiusM / size;
+  return { ...beam, eb: { x: b.x * scale, y: b.y * scale, z: b.z * scale } };
+}
+
+/** γの複製で照明モデルを組み、音アタリ側で照射と自発光を分ける（DOM不要）。 */
 export function buildStageModel(design, rig, { overlay, plan, engine }) {
   const model = overlay.build(design, design.scenes[0].id, plan);
   if (!model) return null;
@@ -298,7 +352,11 @@ export function buildStageModel(design, rig, { overlay, plan, engine }) {
   const lights = design.scenes[0].cue.lights, fixtureById = new Map(rig.fixtures.map((f) => [f.id, f]));
   for (const f of model.fixtures) {
     const fixture = fixtureById.get(f.id);
-    if (fixture && fixture.mount.type === "floor") f.pool = overlay.poolOf(fixture, lights[f.id], { ...f, h: floorZ }, model.dims, engine);   // 常に 0.3m で作り直す（h=0 のままだと床狙いでは null・壁狙いでも光源が床に埋まる）
+    if (!fixture) continue;
+    if (fixture.mount.type === "floor") f.h = floorZ;
+    const led = fixture.fixtureType === "led-bar";
+    f.beam = led ? null : beamOf(fixture, lights[f.id], f, model.dims, engine);
+    if (led || fixture.mount.type === "floor") f.pool = null;
   }
   return model;
 }
@@ -314,6 +372,7 @@ export class Stage3dRenderer {
     // 幾何はこの1回だけ。setData/視点/時刻の変更ではbuildを呼び直さない。
     this.model = buildStageModel(this.design, this.rig, { overlay, plan, engine: window.RIG_ENGINE });
     this.pools = new Map(this.model.fixtures.filter((f) => f.pool).map((f) => [f.id, f.pool]));
+    this.beams = new Map(this.model.fixtures.filter((f) => f.beam).map((f) => [f.id, f.beam]));
     this.setViewpoint("house-center");
     let drag = null;
     canvas.addEventListener("pointerdown", (e) => {
@@ -363,14 +422,16 @@ export class Stage3dRenderer {
     this.resize();
     const ctx = this.ctx, levels = fixtureLevelsAt(t, this.data, this.rig);
     const pools = [...this.pools].map(([id, pool]) => ({ ...pool, ...levels.get(id) })).filter((p) => p.level > 0);
+    const beams = [...this.beams].filter(([id]) => levels.get(id).level > 0)
+      .map(([id, beam]) => ({ ...beamFacingView(beam, this.view), ...levels.get(id) }));
     const P = cueLightProjector(), opts = { topDown: false, tMs: t * 1000, haze: this.render.hazeAmount(35) };
     this.drawShell();
     this.render.paintPools(ctx, pools, P, opts);
-    this.render.paintBeams(ctx, pools, P, opts);
+    this.render.paintBeams(ctx, beams, P, opts);
     this.drawFixtures(levels);
     this.render.paintWorkLight(ctx, pools, P, { ...opts, floorClip: clipCueLightSurfaces });
     this.drawFixtures(levels, { litOnly: true });   // 暗幕の上に、点いている灯体（LEDバーの自発光）だけ描き直す（γ の redrawLitPieces と同じ順）
-    this.render.paintBeams(ctx, pools, P, opts);
+    this.render.paintBeams(ctx, beams, P, opts);
     // playingは共通描画器の契約として受け取る。時刻以外で光を変えない。
   }
 }

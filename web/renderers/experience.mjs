@@ -82,7 +82,7 @@ export function collectExperienceData(discrete = [], events = [], { beats = null
     if (d.intent === "point") {
       const dur = Math.max(0, d.dur || 0);
       maxDur = Math.max(maxDur, dur);
-      points.push({ t: d.t, dur, x: clamp(typeof d.x === "number" ? d.x : 0.5, 0, 1), level: clamp(d.level || 0.4, 0, 1), pitch: d.srcPitchMidi });
+      points.push({ t: d.t, dur, x: clamp(typeof d.x === "number" ? d.x : 0.5, 0, 1), level: clamp(d.level ?? 0.4, 0, 1), pitch: d.srcPitchMidi });
     } else if (DRUM_TAGS.includes(d.srcTag)) {
       const last = lastByTag[d.srcTag];
       if (last !== undefined && d.t - last <= SAME_HIT_SEC) continue;

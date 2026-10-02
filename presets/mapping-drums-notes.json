@@ -1,0 +1,236 @@
+{
+  "format": "oto-atari.mapping",
+  "version": 2,
+  "name": "drums-and-notes",
+  "description": "ドラムは転がし・SS・LED、単音のアタックは吊りスポットへ。実音源は既存のnote候補、無音デモは明示した合成アタックを使う。",
+  "limits": {
+    "maxPerSec": 32
+  },
+  "palettes": {
+    "paper": {
+      "surface": "#ece6da",
+      "sub": "#141414",
+      "bass": "#1f2a5c",
+      "lowmid": "#6b3fa0",
+      "mid": "#e2452f",
+      "high": "#f5b400",
+      "air": "#38c6d9",
+      "accent": "#ff5fa2",
+      "note": "#8fd4c9"
+    }
+  },
+  "startPalette": "paper",
+  "rules": [
+    {
+      "id": "kick-splat",
+      "on": {
+        "event": "onset",
+        "tags": [
+          "kick"
+        ],
+        "minConfidence": 0.4
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "low",
+        "color": "@palette.bass",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.5,
+            1.0
+          ],
+          "curve": "pow0.5"
+        },
+        "weight": 1.0,
+        "decaySec": 1.5,
+        "spread": 0.25,
+        "x": {
+          "from": "pan",
+          "domain": [
+            -1,
+            1
+          ],
+          "range": [
+            0.08,
+            0.92
+          ]
+        }
+      }
+    },
+    {
+      "id": "kick-pulse",
+      "on": {
+        "event": "onset",
+        "tags": [
+          "kick"
+        ],
+        "minConfidence": 0.4
+      },
+      "emit": {
+        "intent": "pulse",
+        "zone": "all",
+        "color": "#ffffff",
+        "level": 0.35,
+        "decaySec": 0.18
+      },
+      "enabled": false
+    },
+    {
+      "id": "snare-splat",
+      "on": {
+        "event": "onset",
+        "tags": [
+          "snare"
+        ],
+        "minConfidence": 0.4
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "high",
+        "color": "@palette.mid",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.3,
+            0.7
+          ]
+        },
+        "weight": 0.35,
+        "decaySec": 0.9,
+        "spread": 0.7,
+        "x": {
+          "from": "pan",
+          "domain": [
+            -1,
+            1
+          ],
+          "range": [
+            0.08,
+            0.92
+          ]
+        }
+      }
+    },
+    {
+      "id": "hat-splat",
+      "on": {
+        "event": "onset",
+        "tags": [
+          "hat"
+        ],
+        "minConfidence": 0.4
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "air",
+        "color": "@palette.air",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.08,
+            0.25
+          ]
+        },
+        "weight": 0.1,
+        "decaySec": 0.5,
+        "spread": 1.0,
+        "x": {
+          "from": "pan",
+          "domain": [
+            -1,
+            1
+          ],
+          "range": [
+            0.08,
+            0.92
+          ]
+        }
+      }
+    },
+    {
+      "id": "haze-fixed",
+      "on": {
+        "curve": "loudness"
+      },
+      "emit": {
+        "intent": "haze",
+        "zone": "all",
+        "level": 0.45
+      }
+    },
+    {
+      "id": "piano-note-position-light",
+      "on": {
+        "event": "note"
+      },
+      "quantize": {
+        "to": "none"
+      },
+      "emit": {
+        "intent": "point",
+        "zone": "mid",
+        "color": "@palette.note",
+        "x": {
+          "from": "position01",
+          "range": [
+            0,
+            1
+          ]
+        },
+        "level": {
+          "from": "modelStrength01",
+          "secondaryFrom": "mixLevel01",
+          "secondaryWeight": 0.3,
+          "range": [
+            0,
+            1
+          ]
+        },
+        "dur": {
+          "from": "dur",
+          "domain": [
+            0,
+            4
+          ],
+          "range": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": "pitched-attack-point",
+      "on": {
+        "event": "onset",
+        "tags": [
+          "pitched-attack"
+        ]
+      },
+      "quantize": {
+        "to": "none"
+      },
+      "emit": {
+        "intent": "point",
+        "zone": "mid",
+        "color": "@palette.note",
+        "x": {
+          "from": "position01",
+          "range": [
+            0,
+            1
+          ]
+        },
+        "level": {
+          "from": "strength",
+          "range": [
+            0,
+            1
+          ]
+        },
+        "dur": 0.16
+      }
+    }
+  ]
+}

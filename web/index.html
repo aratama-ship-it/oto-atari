@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#141416">
 <title>音アタリ — 楽曲を解析して、塗料と照明に割り振る</title>
-<link rel="stylesheet" href="style.css?v=20261001d">
+<link rel="stylesheet" href="style.css?v=20261002a">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="name">音アタリ</span><span class="ver" id="version">v0.6.0</span></div>
+  <div class="brand"><span class="name">音アタリ</span><span class="ver" id="version">v0.6.1</span></div>
   <div class="top-status" id="topStatus" role="status">音源を読み込んでください</div>
   <nav class="views" role="tablist" aria-label="表示">
     <button class="view" data-view="exp" role="tab" aria-selected="false">体験</button>
@@ -64,6 +64,7 @@
         <select id="presetSelect" aria-label="割り振りの既定">
           <option value="presets/mapping-kick-only.json">キックだけ（他の音は非表示）</option>
           <option value="presets/mapping-drums-only.json" selected>ドラムだけ（キック・スネア・ハイハット）</option>
+          <option value="presets/mapping-drums-notes.json">ドラム＋単音（舞台の4種類の光）</option>
           <option value="presets/mapping-ink-default.json">全部の音：インク（重い音は下・暗く／軽い音は上・明るく）</option>
           <option value="presets/mapping-lights-default.json">全部の音：照明（面明かり＋拍＋落としでストロボ）</option>
           <option value="presets/mapping-piano-notes.json">ピアノ単音：音高→左右位置・強度＋原曲音量→光量</option>
@@ -134,10 +135,10 @@
   <div class="tempo mono" id="tempoBox">— BPM</div>
 </footer>
 
-<script src="vendor/gamma/rig-engine.js?v=20261001d"></script>
-<script src="vendor/gamma/stage-lighting-plan-overlay.js?v=20261001d"></script>
-<script src="vendor/gamma/gamma-light-cue-overlay.js?v=20261001d"></script>
-<script src="vendor/gamma/stage-light-render.js?v=20261001d"></script>
-<script type="module" src="app.js?v=20261001d"></script>
+<script src="vendor/gamma/rig-engine.js?v=20261002a"></script>
+<script src="vendor/gamma/stage-lighting-plan-overlay.js?v=20261002a"></script>
+<script src="vendor/gamma/gamma-light-cue-overlay.js?v=20261002a"></script>
+<script src="vendor/gamma/stage-light-render.js?v=20261002a"></script>
+<script type="module" src="app.js?v=20261002a"></script>
 </body>
 </html>

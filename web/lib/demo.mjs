@@ -21,6 +21,12 @@ export function createDemoFeatures() {
       }
     }
   }
+  // UI用の合成アタック。解析済みnote候補を装わず、専用タグからpoint意図へ写す。
+  const melody = [0, 2, 4, 6, 7, 5, 3, 1];
+  for (let bar = 0; bar < 8; bar++) for (let step = 0; step < 2; step++) {
+    hit(bar * 2 + 0.75 + step * 0.5, "pitched-attack", "mid", step ? 0.7 : 0.9);
+    events[events.length - 1].position01 = melody[(bar * 2 + step) % melody.length] / 7;
+  }
   events.sort((a, b) => a.t - b.t);
   const curve = (select) => Array.from({ length: frames }, (_, i) =>
     Math.min(1, events.filter(select).reduce((level, e) => {
