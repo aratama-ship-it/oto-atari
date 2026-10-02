@@ -1,15 +1,15 @@
 // app.js — 音源はAudioContext、無音デモだけはperformanceを時計にし、事前計算したIntentを引いて描く。
 import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs";
-import { createDemoFeatures } from "./lib/demo.mjs?v=20261002d";
+import { createDemoFeatures } from "./lib/demo.mjs?v=20261002e";
 import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs";
 import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs";
 import { InkRenderer } from "./renderers/ink.mjs";
 import { RigRenderer } from "./renderers/rig.mjs";
-import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261002d";
-import { ExperienceRenderer } from "./renderers/experience.mjs?v=20261002d";
+import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261002e";
+import { ExperienceRenderer } from "./renderers/experience.mjs?v=20261002e";
 import { buildGammaDraft, detectTemplate } from "./renderers/gamma-export.mjs";
 
-const VERSION = "0.6.4";
+const VERSION = "0.6.5";
 const $ = (id) => document.getElementById(id);
 const state = {
   audioCtx: null, buffer: null, source: null, startedAt: 0, offset: 0, playing: false,

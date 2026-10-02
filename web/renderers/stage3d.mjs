@@ -1,6 +1,6 @@
-// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜20。
+// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜21。
 // γの幾何ブロックは _delegation/gamma-src-2026-10-01/stage-first-person.js から無改変抽出。
-import { DRUM_WINDOW } from "./experience.mjs?v=20261002d";
+import { DRUM_WINDOW } from "./experience.mjs?v=20261002e";
 
 const W = 12, D = 9, H = 8;
 const FIXTURE_OUTLINE_COLOR = "#808080";
@@ -355,8 +355,8 @@ function drawLedBar(ctx, p, color, level) {
 }
 
 /** 空中の光は実際の狙い先で切る。床の斜入射楕円の中心とは別の幾何。
- * γのpaintBeamsを使い続け、距離×tan(照射角/2)の幅と光軸に直交する面だけここで渡す。 */
-function beamOf(fixture, light, source, dims, engine) {
+ * γの塗りを使い続け、レンズ半径＋距離×tan(照射角/2)の幅と光軸に直交する面を渡す。 */
+function beamOf(fixture, light, source, dims, engine, sourceRadiusM = 0) {
   const aim = light.path.a;
   const from = { ...source };
   const to = { x: (aim.u - 0.5) * dims.W, y: aim.v * dims.D, z: aim.hM };
@@ -366,10 +366,10 @@ function beamOf(fixture, light, source, dims, engine) {
   const axis = { x: delta.x / length, y: delta.y / length, z: delta.z / length };
   const horizontal = Math.hypot(axis.x, axis.y);
   const across = horizontal > 0 ? { x: -axis.y / horizontal, y: axis.x / horizontal, z: 0 } : { x: 1, y: 0, z: 0 };
-  const radiusM = engine.spotRadiusM(from, to, engine.beamDegOf(fixture, light));
+  const radiusM = sourceRadiusM + engine.spotRadiusM(from, to, engine.beamDegOf(fixture, light));
   const eb = { x: across.x * radiusM, y: across.y * radiusM, z: 0 };
   const ea = { x: -axis.z * across.y * radiusM, y: axis.z * across.x * radiusM, z: (axis.x * across.y - axis.y * across.x) * radiusM };
-  return { from, to, c: to, ea, eb, radiusM, surface: "air", softness: light.beamEdgeSoftness };
+  return { from, to, c: to, ea, eb, radiusM, sourceRadiusM, surface: "air", softness: light.beamEdgeSoftness };
 }
 
 /** γの光の筋は1枚の断面。光軸と視線に直交する幅を渡し、横から見ても細線にしない。
@@ -382,6 +382,21 @@ export function beamFacingView(beam, view) {
   if (size < 1e-8) return beam;
   const scale = beam.radiusM / size;
   return { ...beam, eb: { x: b.x * scale, y: b.y * scale, z: b.z * scale } };
+}
+
+/** レンズ面から始まる円錐台の断面。仮想頂点はγの塗り専用で、光源の正本は動かさない。 */
+export function beamApertureGeometry(beam) {
+  const r = beam.sourceRadiusM;
+  if (!(r > 0 && beam.radiusM > r)) return null;
+  const soft = 1.26; // vendor/gamma/stage-light-render.js の BEAM_SOFT（無改変）
+  const radius = r + (beam.radiusM - r) * soft;
+  const width = Object.fromEntries(["x", "y", "z"].map((k) => [k, beam.eb[k] / beam.radiusM]));
+  const edge = (center, distance) => Object.fromEntries(["x", "y", "z"].map((k) => [k, center[k] + width[k] * distance]));
+  const near = [edge(beam.from, r), edge(beam.from, -r)];
+  const far = [edge(beam.to, radius), edge(beam.to, -radius)];
+  const from = Object.fromEntries(["x", "y", "z"].map((k) => [k, beam.from[k] - (beam.to[k] - beam.from[k]) * r / (radius - r)]));
+  const eb = Object.fromEntries(["x", "y", "z"].map((k) => [k, width[k] * radius / soft]));
+  return { near, far, paint: { ...beam, from, eb, apertureFrom: beam.from } };
 }
 
 /** γの無改変模型を仕込みへ置く。床置きだけx軸回り180°で土台を上向きにする。 */
@@ -419,7 +434,8 @@ export function buildStageModel(design, rig, { overlay, plan, engine, body }) {
     const led = fixture.fixtureType === "led-bar";
     f.body = fixtureBodyGeometry(fixture, lights[f.id], f, model.dims, body);
     f.bodyVertices = f.body ? bodyVertices(f.body) : [];
-    f.beam = led ? null : beamOf(fixture, lights[f.id], f.body.lens, model.dims, engine);
+    f.beam = led ? null : beamOf(fixture, lights[f.id], f.body.lens, model.dims, engine,
+      fixture.kind === "moving" ? f.body.size.headR : 0);
     if (led || fixture.mount.type === "floor") f.pool = null;
     else {
       const lens = f.body.lens;
@@ -490,8 +506,35 @@ export class Stage3dRenderer {
         const depth = toCamera({ x: pivot.x, y: pivot.z, z: pivot.y - D / 2 }).z;
         this.body.draw(this.ctx, P, marker.body, { color: value.color, lit: alpha,
           beamDeg: this.design.scenes[0].cue.lights[marker.id].beamDeg,
+          glow: marker.beam.sourceRadiusM > 0 ? false : undefined,
           px: focal / depth, appearance: "white-line", ink: FIXTURE_OUTLINE_COLOR });
       }
+    }
+  }
+  paintBeams(beams, P, opts) {
+    this.render.paintBeams(this.ctx, beams.filter((b) => !b.sourceRadiusM), P, opts);
+    for (const beam of beams.filter((b) => b.sourceRadiusM > 0)) {
+      const shape = beamApertureGeometry(beam);
+      const [a, b] = shape.near.map(P), end = P(beam.to);
+      if (!a || !b || !end) continue;
+      const length = Math.hypot(b.X - a.X, b.Y - a.Y);
+      if (!(length > 1e-8)) continue;
+      const u = { X: (b.X - a.X) / length, Y: (b.Y - a.Y) / length };
+      const side = Math.sign((end.X - a.X) * -u.Y + (end.Y - a.Y) * u.X);
+      if (!side) continue;
+      const reach = Math.hypot(this.w, this.h) + Math.hypot(a.X, a.Y);
+      const near = [{ X: a.X - u.X * reach, Y: a.Y - u.Y * reach },
+        { X: b.X + u.X * reach, Y: b.Y + u.Y * reach }];
+      const far = near.map((p) => ({ X: p.X - u.Y * reach * 2 * side, Y: p.Y + u.X * reach * 2 * side }));
+      // γの帯は終端の投影幅を対称化する。側縁まで実3Dの四辺形で切ると硬い線になるため、根元だけ切る。
+      const corners = [near[0], near[1], far[1], far[0]];
+      const ctx = this.ctx;
+      ctx.save(); ctx.beginPath();
+      ctx.moveTo(corners[0].X, corners[0].Y);
+      for (const p of corners.slice(1)) ctx.lineTo(p.X, p.Y);
+      ctx.closePath(); ctx.clip();
+      this.render.paintBeam(ctx, shape.paint, P, opts);
+      ctx.restore();
     }
   }
   frame(t, { playing = false } = {}) {
@@ -503,9 +546,9 @@ export class Stage3dRenderer {
     const P = cueLightProjector(), opts = { topDown: false, tMs: t * 1000, haze: this.render.hazeAmount(35) };
     this.drawShell();
     this.render.paintPools(ctx, pools, P, opts);
-    this.render.paintBeams(ctx, beams, P, opts);
+    this.paintBeams(beams, P, opts);
     this.render.paintWorkLight(ctx, pools, P, { ...opts, floorClip: clipCueLightSurfaces });
-    this.render.paintBeams(ctx, beams, P, opts);
+    this.paintBeams(beams, P, opts);
     this.drawFixtures(levels);   // γと同じく光の後に筐体を重ね、消灯中も形と向きを残す。
     // playingは共通描画器の契約として受け取る。時刻以外で光を変えない。
   }
