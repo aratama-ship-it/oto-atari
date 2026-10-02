@@ -1,8 +1,9 @@
-// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜18。
+// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜19。
 // γの幾何ブロックは _delegation/gamma-src-2026-10-01/stage-first-person.js から無改変抽出。
-import { DRUM_WINDOW } from "./experience.mjs?v=20261002b";
+import { DRUM_WINDOW } from "./experience.mjs?v=20261002c";
 
 const W = 12, D = 9, H = 8;
+const FIXTURE_OUTLINE_COLOR = "#808080";
 // stage-first-person.js L872-875 / L903-910 の既定値。DOMパネル依存は持ち込まない。
 let state = { yaw: 180, pitch: -2 };
 let canvasWidth = 0, canvasHeight = 0, focal = 1;
@@ -451,7 +452,7 @@ export class Stage3dRenderer {
         const depth = toCamera({ x: pivot.x, y: pivot.z, z: pivot.y - D / 2 }).z;
         this.body.draw(this.ctx, P, marker.body, { color: value.color, lit: alpha,
           beamDeg: this.design.scenes[0].cue.lights[marker.id].beamDeg,
-          px: focal / depth, appearance: "white-line" });
+          px: focal / depth, appearance: "white-line", ink: FIXTURE_OUTLINE_COLOR });
       }
     }
   }
