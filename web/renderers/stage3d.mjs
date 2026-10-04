@@ -652,7 +652,6 @@ export class Stage3dRenderer {
     const P = cueLightProjector(), opts = { topDown: false, tMs: t * 1000, haze: this.render.hazeAmount(35) };
     this.drawShell();
     this.render.paintPools(ctx, pools, P, opts);
-    this.paintBeams(beams, P, opts);
     this.render.paintWorkLight(ctx, pools, P, { ...opts, floorClip: clipCueLightSurfaces });
     this.paintBeams(beams, P, opts);
     if (this.mirrorModel) this.paintMirrorBall(ctx, P, levels, spin);
