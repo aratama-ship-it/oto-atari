@@ -103,6 +103,8 @@ details.gamma p { margin: var(--s2) 0; }
 #stage3dCanvas { touch-action: none; cursor: grab; }
 #stage3dCanvas:active { cursor: grabbing; }
 .stage-viewpoint { min-height: 44px; }
+.stage-mirror { min-height: 44px; }   /* ミラーボールのオン/オフ。視点selectと同じ高さ */
+.stage-mirror input { accent-color: var(--accent); }
 #stageViewpoint {
   appearance: none; -webkit-appearance: none;
   height: 44px; min-height: 44px; min-width: 44px; padding-right: 28px;

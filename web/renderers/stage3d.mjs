@@ -1,6 +1,7 @@
-// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜22。
+// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜22・§25。
 // γの幾何ブロックは _delegation/gamma-src-2026-10-01/stage-first-person.js から無改変抽出。
-import { DRUM_WINDOW } from "./experience.mjs?v=20261002f";
+import { DRUM_WINDOW } from "./experience.mjs?v=20261004a";
+import { spinAt, pinLevelsAt, buildSpinTrack } from "../lib/mirror-ball-map.mjs?v=20261004a";
 
 const W = 12, D = 9, H = 8;
 const FIXTURE_OUTLINE_COLOR = "#808080";
@@ -219,7 +220,18 @@ const STAGE_LED_STYLE = Object.freeze({
   length: 0.5, thickness: 0.06, emitterRatio: 0.88, coreWidth: 0.028,
   haloRadius: 0.18, body: "#080c13", edge: "#2c2c30", core: "#fff2d6",
 });
-const fixtureColor = (f) => f.soundRole === "point" ? STAGE_POINT_STYLE.color : COLORS[f.mount.type];
+// ミラーボール＋ピン2灯（2026-10-04・TOKEN_SHEET §25）。割り振りの純粋関数は lib/mirror-ball-map.mjs。
+// 球は舞台中央のバトンから吊り、ピンは同じバトンの両端（下手・上手）から球をほぼ水平に狙う（γ の light.target＝球の id）。
+// ピンを客席側や舞台前縁に置くと「舞台中央」視点のカメラの目の前を光の筋が横切り、画面が灰色の帯で埋まる（2026-10-04 実測）。
+export const STAGE_MIRROR_STYLE = Object.freeze({
+  ballId: "mirror-ball-01", ballNo: 97, ballU: 0.5, diameterM: 0.6, rpm: null, // rpm null＝γの既定（engine.mirrorBallOf）
+  ballTruss: Object.freeze({ id: "bar-mirror", v: 0.62, h: 6.5, label: "ミラーボール用バトン" }),
+  pinIds: Object.freeze(["mirror-pin-01", "mirror-pin-02"]), pinNo: 98, pinU: Object.freeze([0.03, 0.97]), pinBeamDeg: 8,
+  ballColor: "#f2ead6", pinColor: "#fff4dc",
+  facets: "mid", surfaces: Object.freeze({ floor: true, back: true, ceil: true, side: true }), rays: true,
+});
+const fixtureColor = (f) => f.soundRole === "point" ? STAGE_POINT_STYLE.color
+  : f.soundRole === "mirror-pin" ? STAGE_MIRROR_STYLE.pinColor : f.kind === "mirrorball" ? STAGE_MIRROR_STYLE.ballColor : COLORS[f.mount.type];
 
 // 音程がある場合はそれを正本にする。表示位置の丸めや同じx値で別の音程を束ねない。
 function pointIdentity(point) {
@@ -229,7 +241,7 @@ function pointIdentity(point) {
 }
 
 /** sample-lightdesign.json mid-f-041〜052 の mount/種別と、確定したLED列。 */
-export function createDefaultRig(pointSources = []) {
+export function createDefaultRig(pointSources = [], { mirrorBall = false } = {}) {
   const fixtures = [];
   for (const v of [0.32, 0.68]) for (const side of ["shimote", "kamite"]) for (const h of [0.55, 2.4]) {
     const no = 41 + fixtures.length, low = h === 0.55;
@@ -260,14 +272,45 @@ export function createDefaultRig(pointSources = []) {
     mount: { type: "truss", trussId: trussId(k % p.rows.length), u: p.uStart + (p.uEnd - p.uStart) * k / (count - 1) },
     pointRow: k % p.rows.length,
     kind: "fixed", fixtureType: "profile-zoom", family: "profile", beamDeg: p.beamDeg, role: "吊り単音", soundRole: "point" });
-  return { trusses: [{ id: "bar-t-01", v: 0.5, h: 6.5, label: "照明バトン2" },
-    ...p.rows.map((row, i) => ({ id: trussId(i), v: row.barV, h: p.barHeight, label: `単音スポット用バトン${i + 1}` }))], fixtures, pointFixtureIds };
+  const trusses = [{ id: "bar-t-01", v: 0.5, h: 6.5, label: "照明バトン2" },
+    ...p.rows.map((row, i) => ({ id: trussId(i), v: row.barV, h: p.barHeight, label: `単音スポット用バトン${i + 1}` }))];
+  let mirror = null;
+  if (mirrorBall) {
+    const m = STAGE_MIRROR_STYLE;
+    trusses.push({ ...m.ballTruss });
+    fixtures.push({ id: m.ballId, no: m.ballNo, name: "ミラーボール", mount: { type: "truss", trussId: m.ballTruss.id, u: m.ballU },
+      kind: "mirrorball", mirrorBall: { diameterM: m.diameterM, ...(m.rpm == null ? {} : { rpm: m.rpm }) }, role: "吊り球", soundRole: "mirror-ball" });
+    m.pinIds.forEach((id, i) => fixtures.push({ id, no: m.pinNo + i, name: `ピン ${i + 1}`, mount: { type: "truss", trussId: m.ballTruss.id, u: m.pinU[i] },
+      kind: "fixed", fixtureType: "profile-zoom", family: "profile", beamDeg: m.pinBeamDeg, role: "ピン", soundRole: "mirror-pin", pinSlot: i }));
+    mirror = { ballId: m.ballId, pinIds: [...m.pinIds] };
+  }
+  return { trusses, fixtures, pointFixtureIds, mirror };
+}
+
+/** 球の中心（γ rig-engine.mirrorBallCentre と同じ式: 取り付け点から吊り代と半径だけ下）。 */
+function mirrorBallCentreOf(rig) {
+  const ball = rig.mirror && rig.fixtures.find((f) => f.id === rig.mirror.ballId);
+  if (!ball) return null;
+  const truss = rig.trusses.find((t) => t.id === ball.mount.trussId), R = ball.mirrorBall.diameterM / 2;
+  return { u: ball.mount.u, v: truss.v, hM: Math.max(R, truss.h - 0.3 - R) };   // 0.3 = γ MIRROR_BALL.hangM
 }
 
 export function createStageDesign(rig = createDefaultRig()) {
   const lights = {};
+  const ballAim = mirrorBallCentreOf(rig);
   for (const f of rig.fixtures) {
     const m = f.mount, point = f.soundRole === "point";
+    if (f.kind === "mirrorball" || f.soundRole === "mirror-pin") {
+      // 球＝level 0・on:true が「回す」（γの契約）。ピン＝球の中心を狙う空中の光＋ light.target。
+      lights[f.id] = f.kind === "mirrorball"
+        ? { on: true, level: 0, color: fixtureColor(f), surface: "air", path: { kind: "still", a: { u: ballAim.u, v: ballAim.v, hM: Math.max(0, ballAim.hM - 1) } },
+          speed: "normal", periodSec: null, offsetSec: 0, levelTo: null, beamDegTo: null, beamDeg: f.beamDeg, beamEdgeSoftness: 2,
+          gobo: "none", goboSoft: 6, goboSpin: 0, goboAngle: 0, strobe: null, shutter: null, glare: 1, groupId: null }
+        : { on: true, level: 100, color: fixtureColor(f), surface: "air", path: { kind: "still", a: { ...ballAim } }, target: { fixtureId: rig.mirror.ballId },
+          speed: "normal", periodSec: null, offsetSec: 0, levelTo: null, beamDegTo: null, beamDeg: f.beamDeg, beamEdgeSoftness: STAGE_POINT_STYLE.softness,
+          gobo: "none", goboSoft: 6, goboSpin: 0, goboAngle: 0, strobe: null, shutter: null, glare: 1, groupId: null };
+      continue;
+    }
     // 転がしは舞台奥から客席側へ。LEDは発光面と近傍のにじみだけで、照射面を持たない。
     const aim = m.type === "floor" ? { u: m.u, v: STAGE_LIGHT_STYLE.floorAimV, hM: STAGE_LIGHT_STYLE.floorAimHeight }
       : m.type === "side" ? { u: m.side === "shimote" ? 0.85 : 0.15, v: m.v, hM: 1.0 }
@@ -282,7 +325,7 @@ export function createStageDesign(rig = createDefaultRig()) {
 }
 
 /** leds[] は0始まり。純粋関数: cue優先・未来の打点は不使用・重複はmax。 */
-export function fixtureLevelsAt(t, expData, rig) {
+export function fixtureLevelsAt(t, expData, rig, { spin01 = 0 } = {}) {
   const levels = new Map(rig.fixtures.map((f) => [f.id, { level: 0, color: fixtureColor(f) }]));
   if (!expData || expData.cues.some((c) => c.type === "silence" && t >= c.t && t <= c.t + c.dur)) return levels;
   const hits = expData.hits;
@@ -314,6 +357,8 @@ export function fixtureLevelsAt(t, expData, rig) {
     const life = (1 - age / STAGE_POINT_STYLE.windowSec) ** STAGE_POINT_STYLE.decayPower;
     value.level = Math.max(value.level, life * clamp(finite(point.level, 0), 0, 1) * 100);
   }
+  // ミラーボールのピン: 回っている間の常時の明るさ＋拍（キック・スネア、無ければ拍）の閃光。
+  if (rig.mirror) pinLevelsAt(t, expData, spin01).forEach((level, i) => { levels.get(rig.mirror.pinIds[i]).level = level; });
   return levels;
 }
 
@@ -421,7 +466,7 @@ export function beamApertureGeometry(beam) {
 
 /** γの無改変模型を仕込みへ置く。床置きだけx軸回り180°で土台を上向きにする。 */
 export function fixtureBodyGeometry(fixture, light, marker, dims, body) {
-  if (fixture.fixtureType === "led-bar") return null;
+  if (fixture.fixtureType === "led-bar" || fixture.kind === "mirrorball") return null;
   const source = { x: (marker.u - 0.5) * dims.W, y: marker.v * dims.D, z: marker.h };
   const a = light.path.a, aim = { x: (a.u - 0.5) * dims.W, y: a.v * dims.D, z: a.hM };
   const make = fixture.kind === "moving" ? body.movingHead : body.parCan;
@@ -451,30 +496,33 @@ export function buildStageModel(design, rig, { overlay, plan, engine, body }) {
     const fixture = fixtureById.get(f.id);
     if (!fixture) continue;
     if (fixture.mount.type === "floor") f.h = floorZ;
-    const led = fixture.fixtureType === "led-bar";
+    const led = fixture.fixtureType === "led-bar" || fixture.kind === "mirrorball";   // 自発光・球は模型も光の筋も持たない
     f.body = fixtureBodyGeometry(fixture, lights[f.id], f, model.dims, body);
     f.bodyVertices = f.body ? bodyVertices(f.body) : [];
     f.beam = led ? null : beamOf(fixture, lights[f.id], f.body.lens, model.dims, engine,
       fixture.kind === "moving" ? f.body.size.headR : 0);
-    if (led || fixture.mount.type === "floor") f.pool = null;
+    if (led || fixture.mount.type === "floor" || fixture.soundRole === "mirror-pin") f.pool = null;   // ピンは空中の筋だけ（床の光だまりは作らない）
     else {
-      const lens = f.body.lens;
-      f.pool = overlay.poolOf(fixture, lights[f.id], { ...f, u: lens.x / model.dims.W + 0.5, v: lens.y / model.dims.D, h: lens.z }, model.dims, engine);
+      // γ v0.2.85 以降の poolOf は FIXTURE_BODY の同じ模型でレンズ先端を自分で求める。吊り点を渡し、レンズを二重に足さない。
+      const pool = overlay.poolOf(fixture, lights[f.id], f, model.dims, engine);
+      f.pool = pool && { ...pool, from: f.body.lens };   // 光源は beam と同じ模型レンズ先端（吊り点の狙い先ずれで 1〜2cm 動くのを揃える）
     }
   }
   return model;
 }
 
 export class Stage3dRenderer {
-  constructor(canvas) {
+  // mirrorBall: 舞台にミラーボール＋ピン2灯を置くか（既定オン）。
+  constructor(canvas, { mirrorBall = true } = {}) {
     this.canvas = canvas; this.ctx = canvas.getContext("2d"); this.data = null;
+    this.mirrorBallOn = Boolean(mirrorBall); this.mirrorTrack = null; this.mirrorInfo = null;
     this.render = window.SHOSAI_LIGHT_RENDER;
     this.body = window.FIXTURE_BODY;
     const overlay = window.SHOSAI_STAGE_LIGHT_CUE_OVERLAY;
     const plan = window.SHOSAI_STAGE_LIGHTING_PLAN_OVERLAY;
     if (!window.RIG_ENGINE || !this.render || !overlay || !plan || !this.body) throw new Error("舞台の描画部品を読み込めません。ページを再読み込みしてください");
     this.modelParts = { overlay, plan, engine: window.RIG_ENGINE, body: this.body };
-    this.setRig(createDefaultRig());
+    this.setRig(createDefaultRig([], { mirrorBall: this.mirrorBallOn }));
     this.setViewpoint("house-center");
     let drag = null;
     canvas.addEventListener("pointerdown", (e) => {
@@ -500,10 +548,29 @@ export class Stage3dRenderer {
     this.model = buildStageModel(this.design, rig, this.modelParts);
     this.pools = new Map(this.model.fixtures.filter((f) => f.pool).map((f) => [f.id, f.pool]));
     this.beams = new Map(this.model.fixtures.filter((f) => f.beam).map((f) => [f.id, f.beam]));
+    // ミラーボール: 球の位置・半径は γ の読取モデル（overlay.build の mirrorBall 枠）から。ピンの光源は模型のレンズ先端。
+    const ball = this.model.fixtures.find((f) => f.mirrorBall);
+    const pins = (rig.mirror?.pinIds || []).map((id) => this.model.fixtures.find((f) => f.id === id));
+    this.mirrorModel = ball && pins.every((p) => p && p.body) ? { ball: ball.mirrorBall, pins: pins.map((p) => ({ id: p.id, from: p.body.lens, beamDeg: this.design.scenes[0].cue.lights[p.id].beamDeg })) } : null;
+    this.rebuildMirrorTrack();
   }
-  setData(expData) {
+  /** 持続音の区間 spans（秒）から回転の前計算を作り直す。rpm は球の指定（無ければγの既定）。 */
+  rebuildMirrorTrack() {
+    const spans = this.mirrorSpans || [];
+    const ball = this.rig.mirror && this.rig.fixtures.find((f) => f.id === this.rig.mirror.ballId);
+    const rpm = ball ? this.modelParts.engine.mirrorBallOf(ball).rpm : 0;
+    this.mirrorTrack = this.mirrorModel ? buildSpinTrack(spans, { durationSec: this.mirrorDuration || 0, rpm }) : null;
+  }
+  /** expData＝collectExperienceData の戻り値。mirror＝{ spans:[{start,end}], durationSec }（持続音の区間。無ければ球は止まったまま）。 */
+  setData(expData, mirror = {}) {
     this.data = expData;
-    this.setRig(createDefaultRig([...(expData?.pointSources || []), ...(expData?.points || [])]));
+    this.mirrorSpans = mirror.spans || []; this.mirrorDuration = mirror.durationSec || 0;
+    this.setRig(createDefaultRig([...(expData?.pointSources || []), ...(expData?.points || [])], { mirrorBall: this.mirrorBallOn }));
+    this.rebuildMirrorTrack();
+  }
+  setMirrorBall(on) {
+    this.mirrorBallOn = Boolean(on);
+    this.setRig(createDefaultRig([...(this.data?.pointSources || []), ...(this.data?.points || [])], { mirrorBall: this.mirrorBallOn }));
   }
   reset() { this.data = null; }
   setViewpoint(id) { if (VIEWPOINTS[id]) { this.viewpoint = id; this.view = { ...VIEWPOINTS[id] }; } }
@@ -567,9 +634,18 @@ export class Stage3dRenderer {
       ctx.restore();
     }
   }
+  /** 球の体と反射の粒。回転は rpm 0＋角度（持続音の積分）で渡すので、時刻だけで決まりシークで同じ絵になる。 */
+  paintMirrorBall(ctx, P, levels, spin) {
+    const { ball, pins } = this.mirrorModel, S = STAGE_MIRROR_STYLE, R = this.render;
+    const record = { ...ball, rpm: 0, phaseDeg: spin.phaseDeg,
+      sources: pins.map((pin) => ({ from: pin.from, color: S.pinColor, level: levels.get(pin.id).level, beamDeg: pin.beamDeg })).filter((src) => src.level > 0) };
+    R.paintMirrorBalls(ctx, [record], P, { tMs: 0, dims: { W, D, H }, facets: R.MIRROR_BALL_FACETS[S.facets], surfaces: S.surfaces,
+      rays: S.rays, topDown: false, eye: { x: this.view.x, y: this.view.z + D / 2, z: this.view.y } });
+  }
   frame(t, { playing = false } = {}) {
     this.resize();
-    const ctx = this.ctx, levels = fixtureLevelsAt(t, this.data, this.rig);
+    const spin = this.mirrorTrack ? spinAt(this.mirrorTrack, t) : { env: 0, phaseDeg: 0 };
+    const ctx = this.ctx, levels = fixtureLevelsAt(t, this.data, this.rig, { spin01: spin.env });
     const pools = [...this.pools].map(([id, pool]) => ({ ...pool, ...levels.get(id) })).filter((p) => p.level > 0);
     const beams = [...this.beams].filter(([id]) => levels.get(id).level > 0)
       .map(([id, beam]) => ({ ...beamFacingView(beam, this.view), ...levels.get(id) }));
@@ -579,6 +655,7 @@ export class Stage3dRenderer {
     this.paintBeams(beams, P, opts);
     this.render.paintWorkLight(ctx, pools, P, { ...opts, floorClip: clipCueLightSurfaces });
     this.paintBeams(beams, P, opts);
+    if (this.mirrorModel) this.paintMirrorBall(ctx, P, levels, spin);
     this.drawFixtures(levels);   // γと同じく光の後に筐体を重ね、消灯中も形と向きを残す。
     // playingは共通描画器の契約として受け取る。時刻以外で光を変えない。
   }

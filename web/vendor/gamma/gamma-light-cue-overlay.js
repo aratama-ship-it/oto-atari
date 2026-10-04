@@ -1,4 +1,3 @@
-// 複製元: show-creative-ideas/stage-sketch-gamma/gamma-light-cue-overlay.js（2026-10-01 時点）。音アタリ側では編集しない。直すときは元を直してから再複製
 /* L-1（2026-09-17）: ショー自身の照明デザイン（project.lightingDesign）を、
  * 舞台モードの平面図・正面図へ「概略」として重ねるための読取モデル。
  *
@@ -74,6 +73,11 @@
       if (!c) return null;
       return { kind: "circle", a: c, radiusM: Math.max(0, finite(path.r, 0)), plane: path.plane || "horizontal" };
     }
+    /* 点の列（2026-09-27 テスト用）は概略として最初の点だけ示す。動きは照明デザインタブで見る。 */
+    if (path.kind === "poly" && Array.isArray(path.points) && path.points.length) {
+      const a = point(path.points[0], dims);
+      return a ? { kind: "still", a, note: "poly" } : null;
+    }
     const a = point(path.a, dims);
     return a ? { kind: "still", a } : null;
   }
@@ -98,15 +102,25 @@
     if (!light || !marker || marker.kind === "laser") return null;
     const surface = typeof light.surface === "string" ? light.surface : "";
     if (!POOL_SURFACES[surface]) return null;
-    const source = worldOf(marker, dims);
+    let source = worldOf(marker, dims);
+    let rootR = 0;
     const path = record(light.path) ? light.path : null;
-    const aimPoint = path && record(path.a) ? path.a : null;
+    const polyFirst = path && path.kind === "poly" && Array.isArray(path.points) && record(path.points[0]) ? path.points[0] : null;
+    const aimPoint = path && record(path.a) ? path.a : polyFirst;
     const target = worldOf(aimPoint, dims);
     if (!source || !target) return null;
     /* 狙い先を面の上へ落とす。軸が面に当たる点が楕円の元なので、
        面から浮いた点をそのまま渡すと楕円の大きさが狂う。 */
     if (surface === "floor") target.z = 0;
     else target.y = 0;
+    /* 点光源＝灯体のレンズ面（2026-09-27 本人要望）。灯体の形の部品（stage-fixture-body.js）があれば、
+       吊り点でなく狙い先へ向いたヘッド先端から光を出し、筋の根元の幅（レンズ口径）も pool に持たせる。
+       部品が無ければ従来どおり吊り点から。ホリゾント灯は帯なので対象外。 */
+    const bodyApi = root.FIXTURE_BODY;
+    if (bodyApi && marker.kind !== "laser" && !/^cyc/.test(String(marker.mountType || ""))) {
+      const geom = marker.kind === "moving" ? bodyApi.movingHead(source, target, { scale: 1 }) : bodyApi.parCan(source, target, { scale: 1 });
+      if (geom && geom.lens && Number.isFinite(geom.lens.x + geom.lens.y + geom.lens.z)) { source = geom.lens; rootR = finite(geom.size && geom.size.headR, 0); }
+    }
     const deg = typeof engine.beamDegOf === "function" ? engine.beamDegOf(fixture, light) : 18;
     const ellipse = engine.spotEllipse(source, target, deg, surface);
     if (!ellipse || !ellipse.c || !ellipse.ea || !ellipse.eb) return null;
@@ -132,8 +146,10 @@
       : [];
     return {
       c: ellipse.c, ea: ellipse.ea, eb: ellipse.eb, surface, fall,
-      softness: finite(light.beamEdgeSoftness, 2),
+      softness: typeof engine.opticalSoftnessOf === "function"
+        ? engine.opticalSoftnessOf(fixture, light) : finite(light.beamEdgeSoftness, 2),
       from: source, to: target, radiusM,
+      ...(rootR > 0 ? { rootR } : {}),
       ...(gobo ? { gobo, goboAngle: finite(light.goboAngle, 0), goboSpin: finite(light.goboSpin, 0),
         goboSoft: finite(light.goboSoft, 6) } : {}),
       ...(cuts.length ? { cuts } : {}),
@@ -175,12 +191,13 @@
     return { rays, effect, surface };
   }
 
-  function build(design, sceneId, overlayApi) {
+  function build(design, sceneId, overlayApi, options) {
     const shim = planShim(design);
     if (!shim || !overlayApi || typeof overlayApi.overlayForPlan !== "function") return null;
     const base = overlayApi.overlayForPlan(shim);
     if (!base) return null;
-    const cue = sceneCue(design, sceneId);
+    /* v2-3: タイムライン再生中は「LXキューの混ぜた状態」を渡せる（無ければシーンの作業中の明かり） */
+    const cue = options && record(options.cue) ? options.cue : sceneCue(design, sceneId);
     const lights = cue && record(cue.lights) ? cue.lights : {};
     const dims = base.dims;
 
@@ -200,6 +217,7 @@
       return {
         id: marker.id,
         kind: marker.kind,
+        mountType: marker.mountType || "",
         u: marker.u,
         v: marker.v,
         h: marker.h,
@@ -214,15 +232,46 @@
       };
     });
 
+    /* ミラーボール（2026-10-03・docs/mirror-ball-plan-2026-10-03/DESIGN.md）。球ごとに
+       「中心・半径・回る速さ・当てているピン」を pool / laser とは別の枠 mirrorBall で返す。
+       粒の位置は時刻で変わるので、ここでは計算しない（描く側が共有部品 mirrorBallDotsAt(…, tMs) を呼ぶ）。
+       ピン＝その球を light.target に持つ、点いていて強さ>0 の灯。球の on は「回す／止める」（rpm を 0 にする）。
+       ★球自身の pool・aim・laser は作らない（球は光を出さない）。 */
+    const byId = new Map(fixtures.map((row) => [row.id, row]));
+    fixtures.forEach((row) => {
+      if (row.kind !== "mirrorball") return;
+      const fixture = fixtureById.get(row.id);
+      const spec = engine && typeof engine.mirrorBallOf === "function" ? engine.mirrorBallOf(fixture)
+        : { diameterM: 0.3, rpm: 1 };
+      const hang = engine && engine.MIRROR_BALL ? finite(engine.MIRROR_BALL.hangM, 0.3) : 0.3;
+      const top = worldOf({ u: row.u, v: row.v, hM: row.h }, dims);
+      const R = spec.diameterM / 2;
+      const centre = { x: top.x, y: top.y, z: Math.max(R, top.z - hang - R) };
+      const sources = [];
+      Object.keys(lights).forEach((id) => {
+        const light = lights[id];
+        if (!record(light) || light.on !== true || !(clamp(finite(light.level, 100), 0, 100) > 0)) return;
+        if (!record(light.target) || light.target.fixtureId !== row.id) return;
+        const pin = byId.get(id);
+        if (!pin || pin.kind === "mirrorball") return;
+        sources.push({ from: worldOf({ u: pin.u, v: pin.v, hM: pin.h }, dims), color: pin.color, level: pin.level,
+          beamDeg: engine && typeof engine.beamDegOf === "function" ? engine.beamDegOf(fixtureById.get(id), light) : 6 });
+      });
+      row.mirrorBall = { centre, radiusM: R, rpm: row.state === "on" ? spec.rpm : 0, phaseDeg: 0, hangFrom: top, sources };
+      row.pool = null; row.aim = null; row.laser = null;
+    });
+
     /* 図にしていないもの。黙って省かずに、画面へ「出していない」と書くための材料。 */
     const notes = [];
     const lasers = fixtures.filter((row) => row.kind === "laser" && row.state === "on").length;
     if (lasers) notes.push({ key: "laser", count: lasers });
+    const mirrorBallsLit = fixtures.filter((row) => row.mirrorBall && row.mirrorBall.sources.length).length;
+    if (mirrorBallsLit) notes.push({ key: "mirrorBall", count: mirrorBallsLit });
     const lxq = list(design.scenes).reduce((sum, scene) =>
       sum + (record(scene) && Array.isArray(scene.lxq) ? scene.lxq.length : 0), 0);
     if (lxq) notes.push({ key: "lxq", count: lxq });
 
-    /* 場面のもや（R-2・2026-09-19）。照明を組む画面の値（0〜100・未設定は35）をそのまま持つ。振れ幅への写しは共有部品 hazeAmount。 */
+    /* シーンのもや（R-2・2026-09-19）。照明を組む画面の値（0〜100・未設定は35）をそのまま持つ。振れ幅への写しは共有部品 hazeAmount。 */
     const environment = cue && record(cue.environment) ? cue.environment : null;
     return {
       sceneId: typeof sceneId === "string" ? sceneId : "",
@@ -232,7 +281,8 @@
       trusses: base.trusses,
       fixtures,
       counts: { total: fixtures.length, lit, unset, laser: base.counts.laser,
-        pools: fixtures.filter((row) => row.pool).length },
+        pools: fixtures.filter((row) => row.pool).length,
+        mirrorBall: fixtures.filter((row) => row.mirrorBall).length },
       notes,
     };
   }

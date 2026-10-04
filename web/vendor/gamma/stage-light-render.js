@@ -1,4 +1,3 @@
-// 複製元: show-creative-ideas/stage-sketch-gamma/stage-light-render.js（2026-10-01 時点）。音アタリ側では編集しない。直すときは元を直してから再複製
 /* 光の塗りの共有部品（2026-09-18・段階1「光だまり」）
  *
  * 舞台スケッチ本体と、照明を組む画面が、**同じ塗り方**で光を出すための1ファイル。
@@ -60,6 +59,7 @@
   const BEAM_FALL_HI = 1.35;    // 上限。灯体側が飽和しないように
   const BEAM_FALL_STOPS = 9;    // 長さ方向の色止めの数（spotFalloff の9点に合わせる）
   const BEAM_FALL_NORM_T = 0.5; // ここを1.0に正規化する＝筋の中ほどは今までと同じ濃さ
+  const BEAM_LANDING_FADE_START = 0.72; // 着地点では光だまりへ溶かし、三角の底辺を見せない
   /* R-2「空気のむら（世界に固定された霧）」（2026-09-19・本人決定「R-2 を『もや』にする。段階5③は棚上げ」）。
      ★つまみは1つ＝照明デザインのシーンごとの `environment.haze`（0〜100・照明を組む画面の値・既定35）。
        hazeAmount(haze) で振れ幅へ写す: 100 → HAZE_MAX、35 → 0.15、70 → 0.30（設計 §4-4 の「確認用 0.30」）。
@@ -348,26 +348,42 @@
 
   /* 筋を横切る濃淡（扇形グラデーション）。塗る先の文脈を受け取るので、
      画面へ直に描くときも一時キャンバスへ描くときも同じ式が使える。 */
-  function beamGradient(target, from, cornerP, cornerM, colour, alpha, softness, gain) {
+  /* 台形の筋の「仮想の頂点」＝両縁を延長して交わる点（レンズの後ろ）。扇形のグラデーションの中心を
+     ここに置くと、等値線が台形の縁と平行になり、根元でもレンズの幅いっぱいが明るい。
+     縁が平行（交点が無い）なら null＝平行のグラデーションへ。 */
+  function beamApex(ends, cornerP, cornerM) {
+    if (!ends) return null;
+    const ax = ends.fromP.X, ay = ends.fromP.Y, bx = cornerP.X - ax, by = cornerP.Y - ay;
+    const cx = ends.fromM.X, cy = ends.fromM.Y, dx = cornerM.X - cx, dy = cornerM.Y - cy;
+    const den = bx * dy - by * dx;
+    if (Math.abs(den) < 1e-6) return null;
+    const t = ((cx - ax) * dy - (cy - ay) * dx) / den;
+    const apex = { X: ax + bx * t, Y: ay + by * t };
+    return Number.isFinite(apex.X + apex.Y) ? apex : null;
+  }
+
+  function beamGradient(target, from, cornerP, cornerM, colour, alpha, softness, gain, apex) {
     const soft = clamp(finite(softness, SOFT_DEFAULT), 0, 10);
     const feather = 0.06 + soft * 0.035;
     const profile = [[0, 0], [feather * 0.45, 0.3], [feather, 1],
       [1 - feather, 1], [1 - feather * 0.45, 0.3], [1, 0]];
     const lift = Math.max(0, finite(gain, 1));
     /* 筋は灯体（点）から放射状に伸びる。扇形のグラデーションなら等値線が灯体から出る半直線になる。
+       根元に幅があるときは中心を仮想の頂点（apex）に置く＝等値線が台形の縁に沿う。
        扇形が無い環境では平行のグラデーションへ戻す（見え方は近い）。 */
+    const origin = apex || from;
     if (typeof target.createConicGradient === "function") {
       const TAU = Math.PI * 2;
       const wrap = (value) => ((value % TAU) + TAU) % TAU;
       const angleAt = (t) => Math.atan2(
-        cornerM.Y + (cornerP.Y - cornerM.Y) * t - from.Y,
-        cornerM.X + (cornerP.X - cornerM.X) * t - from.X);
+        cornerM.Y + (cornerP.Y - cornerM.Y) * t - origin.Y,
+        cornerM.X + (cornerP.X - cornerM.X) * t - origin.X);
       const left = angleAt(0), right = angleAt(1);
       const clockwise = wrap(right - left) <= Math.PI;
       const start = clockwise ? left : right;
       const sweep = clockwise ? wrap(right - left) : wrap(left - right);
       if (sweep > 1e-4) {
-        const gradient = target.createConicGradient(start, from.X, from.Y);
+        const gradient = target.createConicGradient(start, origin.X, origin.Y);
         profile
           .map(([t, weight]) => [clamp(wrap(angleAt(t) - start) / TAU, 0, 1), weight])
           .sort((a, b) => a[0] - b[0])
@@ -382,8 +398,61 @@
     return gradient;
   }
 
+  /* 正面図の光の筋は、投影後の光だまりへ接する2本の線で裾を決める。
+     以前は楕円の短軸だけを裾に使っていたため、斜めから当てる灯では長軸の傾きが
+     無視され、筋と光だまりが別々の場所へ向いて見えた。ここでは実際に paintPool が
+     描く楕円（BEAM_SOFT を含む）へ、灯体の画面位置から引ける接線を解く。 */
+  function beamLandingTangents(pool, P) {
+    if (!pool || !pool.c || !pool.ea || !pool.eb || !pool.from || typeof P !== "function") return null;
+    const from = P(pool.from), centre = P(pool.c);
+    const alongA = P(add(pool.c, pool.ea)), alongB = P(add(pool.c, pool.eb));
+    if (!from || !centre || !alongA || !alongB) return null;
+    const ax = (alongA.X - centre.X) * BEAM_SOFT;
+    const ay = (alongA.Y - centre.Y) * BEAM_SOFT;
+    const bx = (alongB.X - centre.X) * BEAM_SOFT;
+    const by = (alongB.Y - centre.Y) * BEAM_SOFT;
+    if (![from.X, from.Y, centre.X, centre.Y, ax, ay, bx, by].every(Number.isFinite)) return null;
+    const dx = centre.X - from.X, dy = centre.Y - from.Y;
+    const cross = (x1, y1, x2, y2) => x1 * y2 - y1 * x2;
+    const u = cross(dx, dy, bx, by);
+    const v = -cross(dx, dy, ax, ay);
+    const w = cross(ax, ay, bx, by);
+    const radius = Math.hypot(u, v);
+    if (!(radius > 1e-6) || Math.abs(w) >= radius - 1e-6) return null;
+    const base = Math.atan2(v, u);
+    const spread = Math.acos(clamp(-w / radius, -1, 1));
+    const pointAt = (angle) => ({
+      X: centre.X + ax * Math.cos(angle) + bx * Math.sin(angle),
+      Y: centre.Y + ay * Math.cos(angle) + by * Math.sin(angle),
+    });
+    const cornerP = pointAt(base + spread);
+    const cornerM = pointAt(base - spread);
+    if (Math.hypot(cornerP.X - cornerM.X, cornerP.Y - cornerM.Y) < 1) return null;
+    return { from, centre, cornerP, cornerM, ax, ay, bx, by };
+  }
+
+  /* 一時キャンバス上の帯だけを薄くする。斜めの底辺でも灯体→左右の接点を
+     それぞれ0→1に写し、底辺全体のαを0にする。主キャンバスの床は消さない。 */
+  function fadeBeamLanding(target, from, cornerP, cornerM, start = BEAM_LANDING_FADE_START) {
+    const sideX = (cornerP.X - cornerM.X) / 2, sideY = (cornerP.Y - cornerM.Y) / 2;
+    const axisX = (cornerP.X + cornerM.X) / 2 - from.X;
+    const axisY = (cornerP.Y + cornerM.Y) / 2 - from.Y;
+    if (Math.abs(sideX * axisY - sideY * axisX) < 1e-6) return false;
+    target.save();
+    target.globalCompositeOperation = "destination-in";
+    target.transform(sideX, sideY, axisX, axisY, from.X, from.Y);
+    const fade = target.createLinearGradient(0, 0, 0, 1);
+    fade.addColorStop(0, "#fff");
+    fade.addColorStop(start, "#fff");
+    fade.addColorStop(1, "rgba(255,255,255,0)");
+    target.fillStyle = fade;
+    target.fillRect(-1, 0, 2, 1);
+    target.restore();
+    return true;
+  }
+
   function paintBeam(ctx, pool, P, opts) {
-    if (!pool || !pool.c || !pool.eb || !pool.from) return false;
+    if (!pool || !pool.c || !pool.ea || !pool.eb || !pool.from) return false;
     const level = clamp(finite(pool.level, 0), 0, 100) / 100;
     if (!(level > 0)) return false;
     const from = P(pool.from);
@@ -391,9 +460,27 @@
     if (!from || !centre) return false;
     const span = Math.hypot(centre.X - from.X, centre.Y - from.Y);
     const alpha = clamp(level * VISUAL_GAIN, 0, 1);
+    /* 根元の幅（2026-09-27 実験室・本人要望「光の広がりは機材の幅から」）。pool.rootR（m）があれば、
+       筋は点でなくレンズ口径の幅から始まる台形になる。無ければ従来どおり点から開く三角。 */
+    const rootHalf = (() => {
+      const rootR = finite(pool.rootR, 0); if (!(rootR > 0)) return 0;
+      const q1 = P({ x: pool.from.x + 1, y: pool.from.y, z: pool.from.z });
+      const pxPerM = q1 ? Math.hypot(q1.X - from.X, q1.Y - from.Y) : 0;
+      return rootR * pxPerM;
+    })();
+    const rootEnds = (cornerP, cornerM) => {
+      if (!(rootHalf > 0.5)) return null;
+      const dx = centre.X - from.X, dy = centre.Y - from.Y, len = Math.hypot(dx, dy) || 1;
+      let nx = -dy / len * rootHalf, ny = dx / len * rootHalf;
+      if (cornerP && ((cornerP.X - centre.X) * nx + (cornerP.Y - centre.Y) * ny) < 0) { nx = -nx; ny = -ny; }
+      return { fromP: { X: from.X + nx, Y: from.Y + ny }, fromM: { X: from.X - nx, Y: from.Y - ny } };
+    };
 
     if (opts && opts.topDown) {
       if (!(span > LINE_MIN_PX)) return false;
+      /* 根元の幅を持つ光（灯体の形がある新しい pool）は、上から見る図では筋を描かない＝光だまりだけ
+         （2026-09-27 本人「平面図は光だまりだけでOK」）。根元の幅が無い旧来の pool は従来どおり破線。 */
+      if (rootHalf > 0.5) return false;
       ctx.save();
       ctx.globalCompositeOperation = "screen";
       ctx.strokeStyle = rgba(pool.color, LINE_ALPHA * alpha);
@@ -409,20 +496,34 @@
     }
 
     if (!(span > BAND_MIN_PX)) return false;
-    const alongB = P(add(pool.c, pool.eb));
-    if (!alongB) return false;
-    const bx = (alongB.X - centre.X) * BEAM_SOFT, by = (alongB.Y - centre.Y) * BEAM_SOFT;
-    if (!Number.isFinite(bx + by) || Math.hypot(bx, by) < 1) return false;
-
-    const cornerP = { X: centre.X + bx, Y: centre.Y + by };
-    const cornerM = { X: centre.X - bx, Y: centre.Y - by };
+    const landing = beamLandingTangents(pool, P);
+    let cornerP = landing && landing.cornerP;
+    let cornerM = landing && landing.cornerM;
+    if (landing && Array.isArray(pool.cuts) && pool.cuts.length && root.RIG_ENGINE && root.RIG_ENGINE.beamLandingSilhouette) {
+      const cutLanding = root.RIG_ENGINE.beamLandingSilhouette(landing.from,
+        { cx: landing.centre.X, cy: landing.centre.Y, ax: landing.ax, ay: landing.ay, bx: landing.bx, by: landing.by },
+        pool.cuts.map((cut) => ({ mx: cut.mx, my: cut.my, d: cut.d / BEAM_SOFT,
+          soft: finite(cut.soft, 0.04) / BEAM_SOFT })));
+      if (cutLanding) { cornerP = cutLanding.cornerP; cornerM = cutLanding.cornerM; }
+    }
+    /* 極端に広い光で灯体の投影が楕円内へ入ると接線は存在しない。その場合まで筋を
+       消さないよう、従来の短軸端へだけ戻す（通常の灯は上の接線経路を通る）。 */
+    if (!cornerP || !cornerM) {
+      const alongB = P(add(pool.c, pool.eb));
+      if (!alongB) return false;
+      const bx = (alongB.X - centre.X) * BEAM_SOFT, by = (alongB.Y - centre.Y) * BEAM_SOFT;
+      if (!Number.isFinite(bx + by) || Math.hypot(bx, by) < 1) return false;
+      cornerP = { X: centre.X + bx, Y: centre.Y + by };
+      cornerM = { X: centre.X - bx, Y: centre.Y - by };
+    }
 
     /* 長さ方向の濃淡（灯体に近いほど明るい）。
        ★掛け算なので、光だまりと同じく**別のキャンバスで「横断 × 長さ」を作ってから1枚で載せる**。
          destination-in はαを減らすことしかできないので、三角形の側を BEAM_FALL_HI 倍だけ濃く塗り、
          色止めを HI で割って 0〜1 に収める。掛け合わせると元の濃さ × 倍率に戻る。 */
     const stops = beamFalloff(pool, P, BEAM_FALL_STOPS, opts && opts.haze);   // opts.haze＝むらの振れ幅（hazeAmount で写した値）
-    const sheet = stops ? beamSheetFor(ctx, from, cornerP, cornerM) : null;
+    const ends = rootEnds(cornerP, cornerM);
+    const sheet = stops ? beamSheetFor(ctx, from, cornerP, cornerM, ends ? [ends.fromP, ends.fromM] : null) : null;
 
     if (!sheet) {
       /* ブラウザが無い／画面の外／一時キャンバスを作れないときは、長さ方向を掛けずにそのまま塗る
@@ -430,13 +531,15 @@
       ctx.save();
       ctx.globalCompositeOperation = "screen";
       ctx.fillStyle = beamGradient(ctx, from, cornerP, cornerM, pool.color, alpha, pool.softness, 1);
+      const e0 = rootEnds(cornerP, cornerM);
+      ctx.fillStyle = beamGradient(ctx, from, cornerP, cornerM, pool.color, alpha, pool.softness, 1, beamApex(e0, cornerP, cornerM));
       ctx.beginPath();
-      ctx.moveTo(from.X, from.Y);      // 灯体は点。点から広がる三角なら捻れない
-      ctx.lineTo(cornerP.X, cornerP.Y);
-      ctx.lineTo(cornerM.X, cornerM.Y);
+      if (e0) { ctx.moveTo(e0.fromP.X, e0.fromP.Y); ctx.lineTo(cornerP.X, cornerP.Y); ctx.lineTo(cornerM.X, cornerM.Y); ctx.lineTo(e0.fromM.X, e0.fromM.Y); }
+      else { ctx.moveTo(from.X, from.Y); ctx.lineTo(cornerP.X, cornerP.Y); ctx.lineTo(cornerM.X, cornerM.Y); }   // 灯体は点。点から広がる三角なら捻れない
       ctx.closePath();
       ctx.fill();
       ctx.restore();
+      if (e0) paintRootGlow(ctx, pool, from, centre, e0, cornerP, cornerM, alpha, beamApex(e0, cornerP, cornerM));
       return true;
     }
 
@@ -445,11 +548,10 @@
     sheetCtx.clearRect(0, 0, pw, ph);
     sheetCtx.setTransform(sx, 0, 0, sy, -x0 * sx, -y0 * sy);   // 以降は本体と同じ座標系のまま書ける
     sheetCtx.fillStyle = beamGradient(
-      sheetCtx, from, cornerP, cornerM, pool.color, alpha, pool.softness, BEAM_FALL_HI);
+      sheetCtx, from, cornerP, cornerM, pool.color, alpha, pool.softness, BEAM_FALL_HI, beamApex(ends, cornerP, cornerM));
     sheetCtx.beginPath();
-    sheetCtx.moveTo(from.X, from.Y);
-    sheetCtx.lineTo(cornerP.X, cornerP.Y);
-    sheetCtx.lineTo(cornerM.X, cornerM.Y);
+    if (ends) { sheetCtx.moveTo(ends.fromP.X, ends.fromP.Y); sheetCtx.lineTo(cornerP.X, cornerP.Y); sheetCtx.lineTo(cornerM.X, cornerM.Y); sheetCtx.lineTo(ends.fromM.X, ends.fromM.Y); }
+    else { sheetCtx.moveTo(from.X, from.Y); sheetCtx.lineTo(cornerP.X, cornerP.Y); sheetCtx.lineTo(cornerM.X, cornerM.Y); }
     sheetCtx.closePath();
     sheetCtx.fill();
 
@@ -464,13 +566,36 @@
     sheetCtx.fillStyle = shade;
     sheetCtx.fillRect(x0, y0, w, h);
     sheetCtx.globalCompositeOperation = "source-over";
+    fadeBeamLanding(sheetCtx, from, cornerP, cornerM);
     sheetCtx.setTransform(1, 0, 0, 1, 0, 0);
 
     ctx.save();
     ctx.globalCompositeOperation = "screen";
     ctx.drawImage(canvas, 0, 0, pw, ph, x0, y0, w, h);
     ctx.restore();
+    if (ends) paintRootGlow(ctx, pool, from, centre, ends, cornerP, cornerM, alpha, beamApex(ends, cornerP, cornerM));
     return true;
+  }
+
+  /* 光の出だし（根元）の明るい芯。筋と同じ台形の中だけに、レンズから ROOT_FRAC までで消える光を足す。
+     形は筋そのもの＝縁が2本にならない。 */
+  const ROOT_FRAC = 0.38;
+  const ROOT_GAIN = 1.1;
+  /* 芯は本体の筋と**同じ横断面**（同じ扇形グラデーション・同じ縁のぼけ）で作り、長さ方向だけ根元に寄せる。
+     別の断面で重ねると「2つの光が層になった」ように見える（2026-09-27 本人指摘）。 */
+  function paintRootGlow(ctx, pool, from, centre, ends, cornerP, cornerM, alpha, apex) {
+    if (!(alpha > 0) || !ends) return;
+    const sheet = beamSheetFor(ctx, from, cornerP, cornerM, [ends.fromP, ends.fromM]);
+    if (!sheet) return;
+    const { canvas, ctx: sc, x0, y0, w, h, pw, ph, sx, sy } = sheet;
+    sc.setTransform(1, 0, 0, 1, 0, 0); sc.clearRect(0, 0, pw, ph); sc.setTransform(sx, 0, 0, sy, -x0 * sx, -y0 * sy);
+    sc.fillStyle = beamGradient(sc, from, cornerP, cornerM, pool.color, alpha, pool.softness, ROOT_GAIN, apex);
+    sc.beginPath(); sc.moveTo(ends.fromP.X, ends.fromP.Y); sc.lineTo(cornerP.X, cornerP.Y); sc.lineTo(cornerM.X, cornerM.Y); sc.lineTo(ends.fromM.X, ends.fromM.Y); sc.closePath(); sc.fill();
+    const shade = sc.createLinearGradient(from.X, from.Y, centre.X, centre.Y);
+    shade.addColorStop(0, "rgba(255,255,255,0.9)"); shade.addColorStop(ROOT_FRAC * 0.4, "rgba(255,255,255,0.4)"); shade.addColorStop(ROOT_FRAC, "rgba(255,255,255,0)"); shade.addColorStop(1, "rgba(255,255,255,0)");
+    sc.globalCompositeOperation = "destination-in"; sc.fillStyle = shade; sc.fillRect(x0, y0, w, h);
+    sc.globalCompositeOperation = "source-over"; sc.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.drawImage(canvas, 0, 0, pw, ph, x0, y0, w, h); ctx.restore();
   }
 
   /* 筋を描くぶんだけの一時キャンバスを用意する。画面の外は切り落とす（塗る面積＝重さなので）。 */
@@ -495,12 +620,13 @@
     };
   }
 
-  function beamSheetFor(ctx, from, cornerP, cornerM) {
+  function beamSheetFor(ctx, from, cornerP, cornerM, extra) {
     const target = ctx && ctx.canvas;
     const cw = target ? finite(target.width, 0) : 0;
     const ch = target ? finite(target.height, 0) : 0;
     if (!(cw > 0 && ch > 0)) return null;
-    const xs = [from.X, cornerP.X, cornerM.X], ys = [from.Y, cornerP.Y, cornerM.Y];
+    const pts = [from, cornerP, cornerM].concat(Array.isArray(extra) ? extra : []);
+    const xs = pts.map((q) => q.X), ys = pts.map((q) => q.Y);
     if (!xs.every(Number.isFinite) || !ys.every(Number.isFinite)) return null;
     const box = canvasBoxInUserSpace(ctx, cw, ch);
     const x0 = Math.max(Math.floor(box.x0), Math.floor(Math.min(...xs)) - 2);
@@ -740,13 +866,298 @@
     return drawn;
   }
 
+
+  /* ---------- ミラーボール（2026-10-03・設計 docs/mirror-ball-plan-2026-10-03/DESIGN.md） ----------
+     鏡片の法線 n、入射 d（ピン→鏡片）に対し反射 r = d − 2(d·n)n。鏡片の位置 F = C + R·n から r の向きへ進み、
+     最初に当たる面（床 z=0／奥の壁 y=0／天井 z=H／袖 x=±W/2／客席側 y=D）に「粒」が落ちる。
+     球の回転は n を鉛直軸(z)まわりに回すだけ（rpm → 1分で1周）。
+     ★mirrorBallDotsAt は世界座標だけの純粋関数（canvas 不要・node で検査できる）。
+     ★塗り（paintMirrorBalls）は 面×色×明るさ3段ごとに Path2D へ全部の粒を入れて1回 fill（lighter）。
+       粒を1つずつ fill すると数百〜千回の合成になる。shadowBlur は使わない（Safari で重い・ctx.filter は無視される）。
+     ★「mirror」の語は組の鏡映（mirrorMount 等）に既に使っているので、ここは必ず mirrorBall と書く。 */
+  const MIRROR_BALL_FACETS = Object.freeze({ low: 240, mid: 600, high: 1500 });   // 鏡片の標本数（実物 φ300 は約2,800枚）
+  const MIRROR_BALL_DOT_BASE_M = 0.012;     // 粒の半径の底（鏡片 10mm ＋ 少し）
+  const MIRROR_BALL_DOT_SPREAD = 0.006;     // 1m 進むごとの広がり（≒0.7°・推測値。デモで見た目を確認した）
+  const MIRROR_BALL_DOT_FALL_M = 7;         // 明るさが半分になる距離(m)
+  const MIRROR_BALL_DOT_ALPHA = Object.freeze([0.9, 0.6, 0.3]);   // 明るさ3段
+  const MIRROR_BALL_RAY_EVERY = 12;         // 筋は何粒に1本か
+  const MIRROR_BALL_RAY_ALPHA = 0.08;
+  const MIRROR_BALL_HALO = 2;               // 淡い輪の半径倍率
+  const MIRROR_BALL_HANG_M = 0.3;           // バトンから球の天辺までの吊り代（モーター分）
+  /* 球そのものの光り（2026-10-03・本人要望「ミラーボールそのものが反射で光るようにもしたい」）。
+     ピンの光を各鏡片が反射し、その向きが「見ている方向」に近い鏡片だけが光る（鏡片の法線 n・入射 d・反射 r=d−2(d·n)n、
+     視線 v に対し r·v ≥ cos σ）。球が回れば光る鏡片が入れ替わって瞬く。σ は実物（鏡片が点光源の像を返す）より広めにして、
+     小さな絵でも瞬きが見えるようにした。 */
+  const MIRROR_BALL_GLINT_SIGMA_DEG = 16;   // 反射の向きが視線からこの角度以内の鏡片が光る
+  const MIRROR_BALL_GLINT_FACETS = 360;     // 体のきらめきに使う鏡片の標本数（小さい絵なので粒より少なくてよい）
+  const MIRROR_BALL_GLINT_MAX = 28;         // 1つの球で描くきらめきの上限
+  const mirrorBallFacetCache = new Map();
+  const mbUnit = (v) => { const n = Math.hypot(v.x, v.y, v.z); return n > 1e-9 ? { x: v.x / n, y: v.y / n, z: v.z / n } : null; };
+  /* 鏡片の法線＝フィボナッチ球（決定的・一様）。数ごとに1回だけ作って使い回す。 */
+  function mirrorBallFacets(count) {
+    const n = Math.max(12, Math.min(6000, Math.round(finite(count, MIRROR_BALL_FACETS.mid))));
+    let list = mirrorBallFacetCache.get(n);
+    if (list) return list;
+    list = [];
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < n; i += 1) {
+      const z = 1 - 2 * (i + 0.5) / n;
+      const r = Math.sqrt(Math.max(0, 1 - z * z));
+      const a = golden * i;
+      list.push({ x: r * Math.cos(a), y: r * Math.sin(a), z });
+    }
+    mirrorBallFacetCache.set(n, list);
+    return list;
+  }
+  /* 粒の一覧（世界座標m）。
+     ball = { centre:{x,y,z}, radiusM, rpm, phaseDeg, sources:[{ from:{x,y,z}, color:"#rrggbb", level:0..100, beamDeg }] }
+     opts = { dims:{W,D,H}, facets, surfaces:{floor,back,ceil,side}, every }
+     返り値 { dots:[{ P, F, on, b, rm, color, bin, ray }], counts:{floor,back,ceil,side,house} }
+       P＝落ちた点・F＝鏡片の位置・on＝落ちた面・b＝明るさ(0..1)・rm＝粒の半径(m)・bin＝明るさ3段・ray＝筋を描く粒か */
+  function mirrorBallDotsAt(ball, tMs, opts) {
+    const o = opts || {};
+    const dims = o.dims || {};
+    const W = finite(dims.W, 12), D = finite(dims.D, 9), H = finite(dims.H, 8);
+    const surfaces = o.surfaces || { floor: true, back: true };
+    const out = { dots: [], counts: { floor: 0, back: 0, ceil: 0, side: 0, house: 0 } };
+    const C = ball && ball.centre;
+    if (!C || !Array.isArray(ball.sources) || !ball.sources.length) return out;
+    const R = Math.max(0.05, finite(ball.radiusM, 0.15));
+    const facets = mirrorBallFacets(o.facets);
+    const every = Math.max(1, Math.round(finite(o.every, MIRROR_BALL_RAY_EVERY)));
+    const ang = finite(ball.phaseDeg, 0) * Math.PI / 180
+      + finite(ball.rpm, 0) * Math.PI * 2 / 60 * (finite(tMs, 0) / 1000);
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    ball.sources.forEach((src) => {
+      const S = src && src.from;
+      const level = clamp(finite(src && src.level, 100), 0, 100) / 100;
+      if (!S || !(level > 0)) return;
+      const colour = typeof src.color === "string" && /^#[0-9a-f]{6}$/i.test(src.color) ? src.color : "#f2ead6";
+      const toC = mbUnit({ x: C.x - S.x, y: C.y - S.y, z: C.z - S.z });
+      if (!toC) return;
+      const cosHalf = Math.cos(clamp(finite(src.beamDeg, 6), 1, 170) * Math.PI / 360);
+      let k = 0;
+      for (let i = 0; i < facets.length; i += 1) {
+        const n0 = facets[i];
+        const n = { x: n0.x * ca - n0.y * sa, y: n0.x * sa + n0.y * ca, z: n0.z };
+        const F = { x: C.x + R * n.x, y: C.y + R * n.y, z: C.z + R * n.z };
+        const d = mbUnit({ x: F.x - S.x, y: F.y - S.y, z: F.z - S.z });
+        if (!d) continue;
+        const dn = d.x * n.x + d.y * n.y + d.z * n.z;
+        if (dn >= 0) continue;                                              // 光の当たらない裏側
+        if (d.x * toC.x + d.y * toC.y + d.z * toC.z < cosHalf) continue;      // ピンの円錐の外
+        const r = { x: d.x - 2 * dn * n.x, y: d.y - 2 * dn * n.y, z: d.z - 2 * dn * n.z };
+        let t = Infinity, on = null;
+        const hit = (tt, kind) => { if (tt > 1e-4 && tt < t) { t = tt; on = kind; } };
+        if (r.z < -1e-9) hit((0 - F.z) / r.z, "floor");
+        if (r.z > 1e-9) hit((H - F.z) / r.z, "ceil");
+        if (r.y < -1e-9) hit((0 - F.y) / r.y, "back");
+        if (r.y > 1e-9) hit((D - F.y) / r.y, "house");
+        if (r.x < -1e-9) hit((-W / 2 - F.x) / r.x, "side");
+        if (r.x > 1e-9) hit((W / 2 - F.x) / r.x, "side");
+        if (!on) continue;
+        out.counts[on] += 1;
+        if (!surfaces[on]) continue;
+        const P = { x: F.x + r.x * t, y: F.y + r.y * t, z: F.z + r.z * t };
+        const b = level / (1 + (t / MIRROR_BALL_DOT_FALL_M) * (t / MIRROR_BALL_DOT_FALL_M));
+        k += 1;
+        out.dots.push({ P, F, on, b, rm: MIRROR_BALL_DOT_BASE_M + t * MIRROR_BALL_DOT_SPREAD, color: colour,
+          bin: b > 0.55 ? 0 : b > 0.28 ? 1 : 2, ray: (k % every) === 0 });
+      }
+    });
+    return out;
+  }
+  /* 球の体のきらめき（世界座標の純粋関数・canvas 不要）。
+     ball は mirrorBallDotsAt と同じ。view = { eye:{x,y,z} } か { dir:{x,y,z} }（球から見ている側への向き）。
+     返り値 { glints:[{ n:{x,y,z}, I:0..1, color, i }] }（I の大きい順・上限 MIRROR_BALL_GLINT_MAX）。
+     光る条件: 視線側を向く鏡片（n·v>0.05）・ピン側を向く鏡片（d·n<0）・反射が視線に近い（r·v ≥ cos σ）。 */
+  function mirrorBallGlintsAt(ball, tMs, view, opts) {
+    const out = { glints: [] };
+    const C = ball && ball.centre;
+    if (!C || !Array.isArray(ball.sources) || !ball.sources.length) return out;
+    const v = mirrorBallViewOf(C, view && { eye: view.eye, viewDir: view.dir });
+    if (!v) return out;
+    const o = opts || {};
+    const R = Math.max(0.05, finite(ball.radiusM, 0.15));
+    const facets = mirrorBallFacets(o.facets || MIRROR_BALL_GLINT_FACETS);
+    const ang = finite(ball.phaseDeg, 0) * Math.PI / 180 + finite(ball.rpm, 0) * Math.PI * 2 / 60 * (finite(tMs, 0) / 1000);
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    const cosSigma = Math.cos(clamp(finite(o.sigmaDeg, MIRROR_BALL_GLINT_SIGMA_DEG), 1, 60) * Math.PI / 180);
+    ball.sources.forEach((src) => {
+      const S = src && src.from;
+      const level = clamp(finite(src && src.level, 100), 0, 100) / 100;
+      if (!S || !(level > 0)) return;
+      const colour = typeof src.color === "string" && /^#[0-9a-f]{6}$/i.test(src.color) ? src.color : "#f2ead6";
+      for (let i = 0; i < facets.length; i += 1) {
+        const n0 = facets[i];
+        const n = { x: n0.x * ca - n0.y * sa, y: n0.x * sa + n0.y * ca, z: n0.z };
+        const nv = n.x * v.x + n.y * v.y + n.z * v.z;
+        if (nv <= 0.05) continue;                                             // 視線と反対側
+        const d = mbUnit({ x: C.x + R * n.x - S.x, y: C.y + R * n.y - S.y, z: C.z + R * n.z - S.z });
+        if (!d) continue;
+        const dn = d.x * n.x + d.y * n.y + d.z * n.z;
+        if (dn >= 0) continue;                                                // ピンの光が当たらない側
+        const cosA = (d.x - 2 * dn * n.x) * v.x + (d.y - 2 * dn * n.y) * v.y + (d.z - 2 * dn * n.z) * v.z;
+        if (cosA <= cosSigma) continue;                                       // 反射が視線から遠い
+        const k = (cosA - cosSigma) / (1 - cosSigma);
+        out.glints.push({ n, I: Math.min(1, Math.pow(k, 1.2) * level * (0.6 + 0.4 * nv)), color: colour, i });
+      }
+    });
+    out.glints.sort((a, b) => b.I - a.I);
+    if (out.glints.length > MIRROR_BALL_GLINT_MAX) out.glints.length = MIRROR_BALL_GLINT_MAX;
+    return out;
+  }
+  /* 面の中の2軸（粒の足跡を画面へ写すため。床・天井は x/y、奥の壁は x/z、袖は y/z）。 */
+  const MIRROR_BALL_AXES = Object.freeze({
+    floor: [{ x: 1, y: 0, z: 0 }, { x: 0, y: 1, z: 0 }], ceil: [{ x: 1, y: 0, z: 0 }, { x: 0, y: 1, z: 0 }],
+    back: [{ x: 1, y: 0, z: 0 }, { x: 0, y: 0, z: 1 }], side: [{ x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: 1 }],
+  });
+  /* 見ている向き（球から見ている側への単位ベクトル）。eye か dir のどちらかから作る。 */
+  function mirrorBallViewOf(C, o) {
+    if (o && o.eye) return mbUnit({ x: o.eye.x - C.x, y: o.eye.y - C.y, z: o.eye.z - C.z });
+    if (o && o.viewDir) return mbUnit(o.viewDir);
+    return null;
+  }
+  /* 球の体。鏡片のタイル（回ると流れる）＋ピンの光を受けた側の明るさ＋やわらかい照り返し＋鏡片のきらめき。
+     見る向き（o.eye / o.viewDir）が無いときは従来どおり、グラデーションの球と照り返しだけ。 */
+  function paintMirrorBallBody(ctx, ball, P, opts) {
+    const o = opts || {};
+    const C = ball && ball.centre; if (!C) return false;
+    const c = P(C); if (!c) return false;
+    const R = Math.max(0.05, finite(ball.radiusM, 0.15));
+    const e = P({ x: C.x + R, y: C.y, z: C.z });
+    const e2 = P({ x: C.x, y: C.y, z: C.z + R });
+    const rp = Math.max(2, Math.max(e ? Math.hypot(e.X - c.X, e.Y - c.Y) : 0, e2 ? Math.hypot(e2.X - c.X, e2.Y - c.Y) : 0));
+    if (!Number.isFinite(rp) || rp > 600) return false;
+    ctx.save();
+    if (!o.topDown && ball.hangFrom) {
+      const h = P(ball.hangFrom);
+      if (h) { ctx.strokeStyle = "rgba(200,200,200,0.5)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(c.X, c.Y - rp); ctx.lineTo(h.X, h.Y); ctx.stroke(); }
+    }
+    const v = mirrorBallViewOf(C, o);
+    const lit = (ball.sources || []).filter((src) => src && src.from && clamp(finite(src.level, 100), 0, 100) > 0);
+    const g = ctx.createRadialGradient(c.X - rp * 0.3, c.Y - rp * 0.3, rp * 0.1, c.X, c.Y, rp);
+    if (v) { g.addColorStop(0, "#c9ccd2"); g.addColorStop(0.55, "#7d818a"); g.addColorStop(1, "#33363d"); }   // 鏡片を重ねるので、土台は少し暗め
+    else { g.addColorStop(0, "#f4f4f4"); g.addColorStop(0.5, "#b9bcc3"); g.addColorStop(1, "#5b5f68"); }
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c.X, c.Y, rp, 0, Math.PI * 2); ctx.fill();
+    ctx.globalCompositeOperation = "lighter";
+    /* 鏡片のタイル: 視線側を向く鏡片を小さな点で並べる。ピンのほうを向く鏡片ほど明るい。球が回ると流れる。 */
+    if (v && rp >= 3.5) {
+      const facets = mirrorBallFacets(MIRROR_BALL_GLINT_FACETS);
+      const ang = finite(ball.phaseDeg, 0) * Math.PI / 180 + finite(ball.rpm, 0) * Math.PI * 2 / 60 * (finite(o.tMs, 0) / 1000);
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      let L = null;
+      if (lit.length) { const acc = { x: 0, y: 0, z: 0 }; lit.forEach((src) => { const u = mbUnit({ x: src.from.x - C.x, y: src.from.y - C.y, z: src.from.z - C.z }); if (u) { const w = clamp(finite(src.level, 100), 0, 100) / 100; acc.x += u.x * w; acc.y += u.y * w; acc.z += u.z * w; } }); L = mbUnit(acc); }
+      const bins = [new Path2D(), new Path2D(), new Path2D()], tile = Math.max(0.5, rp * 0.05);
+      for (let i = 0; i < facets.length; i += 1) {
+        const n0 = facets[i];
+        const n = { x: n0.x * ca - n0.y * sa, y: n0.x * sa + n0.y * ca, z: n0.z };
+        const nv = n.x * v.x + n.y * v.y + n.z * v.z; if (nv <= 0.02) continue;
+        const q = P({ x: C.x + R * n.x, y: C.y + R * n.y, z: C.z + R * n.z }); if (!q) continue;
+        const lam = L ? Math.max(0, n.x * L.x + n.y * L.y + n.z * L.z) : 0;
+        const jit = ((Math.imul(i + 1, 2654435761) >>> 0) / 4294967296);          // 鏡片ごとの固定のばらつき
+        const bright = 0.1 + 0.42 * lam + 0.3 * jit, r = tile * (0.65 + 0.35 * nv), bin = bins[bright > 0.55 ? 2 : bright > 0.32 ? 1 : 0];
+        bin.moveTo(q.X + r, q.Y); bin.arc(q.X, q.Y, r, 0, Math.PI * 2);
+      }
+      [0.06, 0.14, 0.26].forEach((alpha, k) => { ctx.fillStyle = rgba("#ffffff", alpha); ctx.fill(bins[k]); });
+    }
+    /* ピンの光を受けているときの、球のまわりのにじみ（光っている印）。 */
+    if (lit.length) {
+      const lvSum = Math.min(1, lit.reduce((sum, src) => sum + clamp(finite(src.level, 100), 0, 100) / 100, 0));
+      const tint = typeof lit[0].color === "string" ? lit[0].color : "#f2ead6", glowR = rp * 2.4;
+      const glow = ctx.createRadialGradient(c.X, c.Y, rp * 0.6, c.X, c.Y, glowR);
+      glow.addColorStop(0, rgba(tint, 0.2 * lvSum)); glow.addColorStop(1, rgba(tint, 0));
+      ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(c.X, c.Y, glowR, 0, Math.PI * 2); ctx.fill();
+    }
+    /* 鏡片のきらめき: 反射が見ている方向に合った鏡片だけが光る。回れば入れ替わって瞬く。 */
+    if (v) {
+      const gl = mirrorBallGlintsAt(ball, o.tMs, { eye: o.eye, dir: o.viewDir });
+      gl.glints.forEach((gk) => {
+        const q = P({ x: C.x + R * gk.n.x, y: C.y + R * gk.n.y, z: C.z + R * gk.n.z }); if (!q) return;
+        const size = Math.max(0.8, rp * (0.06 + 0.09 * gk.I));
+        ctx.fillStyle = rgba(gk.color, 0.3 * gk.I); ctx.beginPath(); ctx.arc(q.X, q.Y, size * 2.6, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = rgba("#ffffff", 0.4 + 0.6 * gk.I); ctx.beginPath(); ctx.arc(q.X, q.Y, size, 0, Math.PI * 2); ctx.fill();
+        if (gk.I > 0.45 && rp >= 5) {        // 強い光は短い十字（きらっとした見え方・球からはみ出しすぎない）
+          const len = rp * (0.28 + 0.5 * gk.I); ctx.strokeStyle = rgba("#ffffff", 0.55 * gk.I); ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(q.X - len, q.Y); ctx.lineTo(q.X + len, q.Y); ctx.moveTo(q.X, q.Y - len); ctx.lineTo(q.X, q.Y + len); ctx.stroke();
+        }
+      });
+    }
+    /* ピン側のやわらかい照り返し（硬い円を重ねると白い塊になるので、放射グラデーションで）。 */
+    lit.forEach((src) => {
+      const s = P(src.from); if (!s) return;
+      const lv = clamp(finite(src.level, 100), 0, 100) / 100;
+      const dx = s.X - c.X, dy = s.Y - c.Y, L = Math.hypot(dx, dy) || 1, x = c.X + dx / L * rp * 0.5, y = c.Y + dy / L * rp * 0.5, r = Math.max(1.5, rp * 0.32);
+      const sp = ctx.createRadialGradient(x, y, 0, x, y, r);
+      sp.addColorStop(0, rgba(typeof src.color === "string" ? src.color : "#f2ead6", 0.42 * lv)); sp.addColorStop(1, rgba(typeof src.color === "string" ? src.color : "#f2ead6", 0));
+      ctx.fillStyle = sp; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    });
+    ctx.restore();
+    return true;
+  }
+  /* まとめて塗る。balls は ball（上）に加えて dims を持ってもよい。
+     opts = { tMs, dims, facets, surfaces, rays, every, topDown }。返り値＝描いた球の数。 */
+  function paintMirrorBalls(ctx, balls, P, opts) {
+    if (!Array.isArray(balls) || !balls.length || typeof Path2D === "undefined") return 0;
+    const o = opts || {};
+    let drawn = 0;
+    balls.forEach((ball) => {
+      if (!ball || !ball.centre) return;
+      const res = mirrorBallDotsAt(ball, o.tMs, { dims: o.dims || ball.dims, facets: o.facets, surfaces: o.surfaces, every: o.every });
+      const groups = new Map(), halos = new Map(), rays = new Map();
+      res.dots.forEach((dot) => {
+        const q = P(dot.P); if (!q) return;
+        const axes = MIRROR_BALL_AXES[dot.on]; if (!axes) return;
+        const qa = P({ x: dot.P.x + axes[0].x * dot.rm, y: dot.P.y + axes[0].y * dot.rm, z: dot.P.z + axes[0].z * dot.rm });
+        const qb = P({ x: dot.P.x + axes[1].x * dot.rm, y: dot.P.y + axes[1].y * dot.rm, z: dot.P.z + axes[1].z * dot.rm });
+        if (!qa || !qb) return;
+        const ax = qa.X - q.X, ay = qa.Y - q.Y, bx = qb.X - q.X, by = qb.Y - q.Y;
+        const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+        if (!Number.isFinite(la + lb)) return;
+        /* 2軸が画面上で直交していなくても楕円で近似する（長い方を長軸、もう片方の直交成分を短軸）。 */
+        const longer = la >= lb ? { x: ax, y: ay, len: la } : { x: bx, y: by, len: lb };
+        const other = la >= lb ? { x: bx, y: by } : { x: ax, y: ay };
+        const across = longer.len > 0 ? Math.abs(longer.x * other.y - longer.y * other.x) / longer.len : 0;
+        const rx = Math.max(0.6, longer.len), ry = Math.max(0.4, across);
+        if (rx > 400) return;                      // カメラの至近で画面いっぱいになる粒は描かない
+        const rot = longer.len > 0 ? Math.atan2(longer.y, longer.x) : 0;
+        const key = `${dot.color}|${dot.bin}`;
+        let path = groups.get(key); if (!path) { path = new Path2D(); groups.set(key, path); }
+        path.moveTo(q.X + rx * Math.cos(rot), q.Y + rx * Math.sin(rot));
+        path.ellipse(q.X, q.Y, rx, ry, rot, 0, Math.PI * 2);
+        let halo = halos.get(key); if (!halo) { halo = new Path2D(); halos.set(key, halo); }
+        halo.moveTo(q.X + rx * MIRROR_BALL_HALO * Math.cos(rot), q.Y + rx * MIRROR_BALL_HALO * Math.sin(rot));
+        halo.ellipse(q.X, q.Y, rx * MIRROR_BALL_HALO, ry * MIRROR_BALL_HALO, rot, 0, Math.PI * 2);
+        if (o.rays && dot.ray) {
+          const f = P(dot.F);
+          if (f) { let line = rays.get(dot.color); if (!line) { line = new Path2D(); rays.set(dot.color, line); } line.moveTo(f.X, f.Y); line.lineTo(q.X, q.Y); }
+        }
+      });
+      if (groups.size) {
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        halos.forEach((path, key) => { const at = key.lastIndexOf("|"); ctx.fillStyle = rgba(key.slice(0, at), MIRROR_BALL_DOT_ALPHA[+key.slice(at + 1)] * 0.18); ctx.fill(path); });
+        groups.forEach((path, key) => { const at = key.lastIndexOf("|"); ctx.fillStyle = rgba(key.slice(0, at), MIRROR_BALL_DOT_ALPHA[+key.slice(at + 1)]); ctx.fill(path); });
+        rays.forEach((path, colour) => { ctx.strokeStyle = rgba(colour, MIRROR_BALL_RAY_ALPHA); ctx.lineWidth = 1; ctx.stroke(path); });
+        ctx.restore();
+      }
+      paintMirrorBallBody(ctx, ball, P, o);
+      drawn += 1;
+    });
+    return drawn;
+  }
+
   const api = Object.freeze({
     paintPool, paintPools, paintBeam, paintBeams, paintWorkLight, litLevelAt, paintLaser, paintLasers,
-    beamFalloff, beamSheetFor, litColorAt, tintColor, hazeAmount, hazeAt, noise3,
+    mirrorBallFacets, mirrorBallDotsAt, mirrorBallGlintsAt, paintMirrorBalls, paintMirrorBallBody, MIRROR_BALL_FACETS, MIRROR_BALL_HANG_M,
+    beamFalloff, beamLandingTangents, fadeBeamLanding, beamSheetFor, litColorAt, tintColor, hazeAmount, hazeAt, noise3,
     TOKENS: Object.freeze({ VISUAL_GAIN, BEAM_SOFT, ALPHA_CORE, ALPHA_MID, ALPHA_EDGE, SOFT_DEFAULT,
       MIN_AREA_PX, BAND_ALPHA, BAND_MIN_PX, LINE_ALPHA, LINE_MIN_PX, HOLE_BAND, HOLE_LINE_PX,
-      BEAM_FALL_R0, BEAM_FALL_P, BEAM_FALL_LO, BEAM_FALL_HI, BEAM_FALL_STOPS, BEAM_FALL_NORM_T,
-      HAZE_AMOUNT, HAZE_MAX, HAZE_SCALE_M, COSTUME_AMBIENT }),
+      BEAM_FALL_R0, BEAM_FALL_P, BEAM_FALL_LO, BEAM_FALL_HI, BEAM_FALL_STOPS, BEAM_FALL_NORM_T, BEAM_LANDING_FADE_START,
+      HAZE_AMOUNT, HAZE_MAX, HAZE_SCALE_M, COSTUME_AMBIENT,
+      MIRROR_BALL_FACETS, MIRROR_BALL_DOT_BASE_M, MIRROR_BALL_DOT_SPREAD, MIRROR_BALL_DOT_FALL_M, MIRROR_BALL_DOT_ALPHA,
+      MIRROR_BALL_RAY_EVERY, MIRROR_BALL_RAY_ALPHA, MIRROR_BALL_HALO, MIRROR_BALL_HANG_M,
+      MIRROR_BALL_GLINT_SIGMA_DEG, MIRROR_BALL_GLINT_FACETS, MIRROR_BALL_GLINT_MAX }),
   });
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.SHOSAI_LIGHT_RENDER = api;

@@ -18,9 +18,9 @@ oto-atari/
 ├── schema/        FEATURE_TIMELINE_SPEC.md / MAPPING_SPEC.md  … 中間形式の仕様（最重要）
 ├── analysis/      analyze.py（Python・librosa）/ merge_piano_notes.py（B曲候補のv2統合）/ test_analyze.py / README.md
 ├── web/
-│   ├── lib/       dsp.mjs（FFT等）/ analyze-core.mjs（JS版解析器）/ mapping-engine.mjs（規則→Intent）/ validate.mjs
+│   ├── lib/       dsp.mjs（FFT等）/ analyze-core.mjs（JS版解析器）/ mapping-engine.mjs（規則→Intent）/ validate.mjs / mirror-ball-map.mjs（舞台のミラーボールの割り振り・純粋関数）
 │   ├── renderers/ ink.mjs（塗料）/ rig.mjs（照明図）/ experience.mjs（体験表示・時刻決定型）/ stage3d.mjs（舞台3D）/ gamma-export.mjs（γ下書き）/ zones.mjs（zone→幾何）
-│   ├── vendor/gamma/ γの照明4モジュール＋灯体モデル（本文無改変）
+│   ├── vendor/gamma/ γの照明共有部品5本（本文無改変・複製元のコミットとSHA-256は PROVENANCE.json）
 │   └── index.html / app.js / style.css
 ├── presets/       既存のv1割り振り / mapping-piano-notes.json（v2）
 ├── samples/       gensan-extend.mp3＋解析結果 / B.mp3＋B-piano.features.v2.json
@@ -69,7 +69,9 @@ node tests/run.mjs                       # JS解析器（合成信号）・割�
 
 「舞台」では、ピアノ・プラックなどのアタックを最低24台・2列の吊りスポットへ割り当てる。音程の種類が多い曲では必要台数へ増え、B曲は40台。低音は左、高音は右で、半音差やオクターブ差も別の灯、同じ音程は同じ灯になる。曲全体から担当を決めるため、シークやルールのON/OFFでも配置は変わらない。打点ですぐ光り、0.6秒で消える。和音は個別に同時点灯し、同音程の重複は強い方を採る。保持時間の長い音も舞台では短い光にするが、元の音価・打点は維持する。音程のない合成デモでは指定した位置ごとに灯を分ける。新たな音色・楽器の認識は追加していない。「次の反応」で停止したまま点灯を確認できる。
 
-灯体は舞台スケッチγの共有部品 `stage-fixture-body.js`（e199725版）を無改変で使用。転がしは土台・ヨーク・ヘッドのあるムービング、SSと吊りスポットは筒型の固定灯で表示する。音アタリ側で床置きの向きとレンズからの照射を接続し、ムービングの光は直径20cmのレンズ面全体から広がる。LEDバーは明るい発光面と周囲の柔らかいにじみを重ね、打点から0.42秒で滑らかに消灯する。
+灯体は舞台スケッチγの共有部品 `stage-fixture-body.js` を無改変で使用。転がしは土台・ヨーク・ヘッドのあるムービング、SSと吊りスポットは筒型の固定灯で表示する。音アタリ側で床置きの向きとレンズからの照射を接続し、ムービングの光は直径20cmのレンズ面全体から広がる。LEDバーは明るい発光面と周囲の柔らかいにじみを重ね、打点から0.42秒で滑らかに消灯する。
+
+舞台には**ミラーボール1つとピン2灯**があり（操作帯の「ミラーボール」で切り替え・既定はオン）、舞台スケッチγの共有部品（γ v0.2.85）で描く。割り振りは「**持続音の間だけ球が回る**（途切れず鳴り続ける中域の帯が1秒以上続く区間と、ピアノ推定の長い音の余韻。回り始め・止まりは約0.8秒で加減速し、止まっても角度は保つ）／**拍でピンが瞬く**（キック→1灯目・スネア→2灯目。ドラムの無い曲は拍の表・裏）」。回っている間はピンが半分の明るさで点き続け、拍で最大まで光る。床・奥の壁・天井・袖に反射の粒が落ち、球の回転に合わせて空間を流れる。回る区間は特徴JSONの連続量から決めるヒューリスティックで、楽器名の判定ではない。ミラーボール以外の割り振り（転がし=キック、SS=スネア、LEDバー=ハット、吊りスポット=アタック）は変えていない。
 
 再生成する場合は `analysis/merge_piano_notes.py FEATURES NOTES AUDIO OUTPUT` を実行する。音源と二つの解析JSONのSHA-256を照合し、一致しなければ止まる。元データは `knowledge/research/audio-stem-feasibility-2026-09-28/test-tracks-20260928/results/` に保存されている。
 

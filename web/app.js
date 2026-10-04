@@ -1,15 +1,16 @@
 // app.js — 音源はAudioContext、無音デモだけはperformanceを時計にし、事前計算したIntentを引いて描く。
 import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs";
-import { createDemoFeatures } from "./lib/demo.mjs?v=20261002f";
+import { createDemoFeatures, DEMO_SUSTAIN_SPANS } from "./lib/demo.mjs?v=20261004a";
+import { sustainSpans } from "./lib/mirror-ball-map.mjs?v=20261004a";
 import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs";
 import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs";
 import { InkRenderer } from "./renderers/ink.mjs";
 import { RigRenderer } from "./renderers/rig.mjs";
-import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261002f";
-import { ExperienceRenderer } from "./renderers/experience.mjs?v=20261002f";
+import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261004a";
+import { ExperienceRenderer } from "./renderers/experience.mjs?v=20261004a";
 import { buildGammaDraft, detectTemplate } from "./renderers/gamma-export.mjs";
 
-const VERSION = "0.6.6";
+const VERSION = "0.7.0";
 const $ = (id) => document.getElementById(id);
 const state = {
   audioCtx: null, buffer: null, source: null, startedAt: 0, offset: 0, playing: false,
@@ -21,11 +22,14 @@ window.otoAtari = { state }; // 検証用（ブラウザ自動操作から状態
 const ink = new InkRenderer($("inkCanvas"));
 const rig = new RigRenderer($("rigCanvas"));
 const exp = new ExperienceRenderer($("expCanvas"));
-const stage3d = new Stage3dRenderer($("stage3dCanvas"));
+// ミラーボールの初期状態: 既定オン。`?mirror=off` で切って開ける（旧来の舞台と見比べる・従来の検査用）。
+if (new URLSearchParams(location.search).get("mirror") === "off") $("mirrorBallToggle").checked = false;
+const stage3d = new Stage3dRenderer($("stage3dCanvas"), { mirrorBall: $("mirrorBallToggle").checked });
 const phoneMedia = matchMedia("(max-width: 699px), (max-width: 999px) and (max-height: 500px)");
 const compactMedia = matchMedia("(max-width: 1199px), (pointer: coarse)");
 const ui = { settingsOpen: false, panel: "panelSource", sourceBusy: false };
 $("stageViewpoint").addEventListener("change", (e) => { stage3d.setViewpoint(e.target.value); });
+$("mirrorBallToggle").addEventListener("change", (e) => { stage3d.setMirrorBall(e.target.checked); updateStageGuide(); });
 $("reduceMotion").addEventListener("change", (e) => { exp.reduce = e.target.checked; });
 $("hatStyle").addEventListener("change", (e) => { exp.hatStyle = e.target.value; updateStageGuide(); });
 
@@ -157,7 +161,8 @@ function recompile() {
   ink.reset(); rig.reset();
   ink.pointMode = rig.pointMode = state.intents.discrete.some((d) => d.intent === "point");
   exp.setData(state.intents.discrete, state.ft.events, { beats: state.ft.tempo && state.ft.tempo.confidence >= 0.3 ? state.ft.tempo.beats : null, sections: state.ft.sections || [] });
-  stage3d.setData(exp.data);
+  // ミラーボールが回る区間（持続音）。実音源は解析結果の連続量から、無音デモは合成パターンの明示した区間。
+  stage3d.setData(exp.data, { spans: state.demo ? DEMO_SUSTAIN_SPANS : sustainSpans(state.ft), durationSec: state.ft.source.durationSec });
   seedActivePoints(now()); state.lastT = now();
   updateStageGuide();
 }
@@ -459,7 +464,7 @@ function updateStageGuide() {
   if (state.view === "stage3d") {
     $("stageGuideTitle").textContent = "舞台（3D）";
     const spots = stage3d.rig.fixtures.filter((f) => f.soundRole === "point").length;
-    $("stageGuideText").textContent = `転がし＝キック（白青のウォッシュを客席側へ）／SS＝スネア（橙・広め）／LEDバー20本＝ハイハット（金・バーだけ）／吊りスポット${spots}台・2列＝ピアノ・プラックなどのアタック（水緑・音程ごとに別の灯、低音は左・高音は右）。戻りは未対応。ドラッグで見回し。`;
+    $("stageGuideText").textContent = `転がし＝キック（白青のウォッシュを客席側へ）／SS＝スネア（橙・広め）／LEDバー20本＝ハイハット（金・バーだけ）／吊りスポット${spots}台・2列＝ピアノ・プラックなどのアタック（水緑・音程ごとに別の灯、低音は左・高音は右）。${$("mirrorBallToggle").checked ? "ミラーボール＝持続音の間だけ回り、ピン2灯が拍（キック・スネア）で瞬いて反射の粒が空間を流れます。" : ""}戻りは未対応。ドラッグで見回し。`;
     return;
   }
   const point = !!state.intents?.discrete.some((d) => d.intent === "point");

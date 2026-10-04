@@ -1,4 +1,6 @@
 // 音源を使わないUIデモ。解析した打点ではなく、明示的に組んだ16秒のパターン。
+/** 光のデモでミラーボールが回る区間（秒）。実音源の解析ではなく、パッドが鳴り続ける想定の合成パターン。16秒でループ。 */
+export const DEMO_SUSTAIN_SPANS = Object.freeze([Object.freeze({ start: 1, end: 7 }), Object.freeze({ start: 8.5, end: 15 })]);
 // 既存の特徴→割り振り→意図を通すので、どの表示でも同じ時刻を使える。
 export function createDemoFeatures() {
   const durationSec = 16, hopSec = 0.05, frames = durationSec / hopSec;

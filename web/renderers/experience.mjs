@@ -105,7 +105,9 @@ export function collectExperienceData(discrete = [], events = [], { beats = null
   const pointSources = events.filter((e) => e.type === "note" ||
     (e.type === "onset" && Number.isFinite(e.position01) && e.tags?.some((tag) => tag.name === "pitched-attack")))
     .map((e) => ({ pitch: e.type === "note" ? e.pitchMidi : undefined, x: e.position01 }));
-  return { hits, points, pointSources, cues, maxDur, mode: points.length ? "piano" : "drums", ledBars: cls.bars, ledFallback: !usable };
+  // beats は舞台のミラーボールのピンが「キック・スネアの無い曲」で拍へ回るために保持する（時刻と拍内位置だけ）。
+  const beatList = usable ? beats.map((b) => ({ t: b.t, beatInBar: b.beatInBar })) : [];
+  return { hits, points, pointSources, cues, maxDur, mode: points.length ? "piano" : "drums", ledBars: cls.bars, ledFallback: !usable, beats: beatList };
 }
 
 /** 昇順配列 arr で arr[i].t >= t となる最初の i。 */

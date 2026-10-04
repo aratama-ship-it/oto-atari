@@ -1,4 +1,3 @@
-// 複製元: show-creative-ideas/stage-sketch-gamma/stage-lighting-plan-overlay.js（2026-10-01 時点）。音アタリ側では編集しない。直すときは元を直してから再複製
 /* Stage Sketch の劇場照明プランを、編集用の平面図へだけ重ねるための読取モデル。
  *
  * ここは project.lightingDesign を変更しない。全消灯の仮想仕込みを「既存照明と
@@ -33,10 +32,10 @@
       .filter((truss) => truss.id);
   }
 
-  function markerForFixture(fixture, trusses, dims) {
+  function markerForFixture(fixture, trusses, dims, rig) {
     if (!record(fixture) || !record(fixture.mount)) return null;
     const mount = fixture.mount;
-    const kind = fixture.kind === "laser" ? "laser" : fixture.kind === "moving" ? "moving" : "fixed";
+    const kind = fixture.kind === "laser" ? "laser" : fixture.kind === "mirrorball" ? "mirrorball" : fixture.kind === "moving" ? "moving" : "fixed";   // mirrorball: 2026-10-03
     const marker = {
       id: typeof fixture.id === "string" ? fixture.id : "",
       kind,
@@ -49,7 +48,10 @@
       conceptual: true,
     };
     if (!marker.id) return null;
-    if (mount.type === "truss") {
+    if(mount.type === "position"){
+      let p;try{p=root.GAMMA_LIGHT_MODEL?.positionLayout?.world(rig,mount,dims);}catch(_){return null;}
+      if(!p)return null;marker.u=p.x/dims.W+.5;marker.v=p.y/dims.D;marker.h=p.z;marker.outside=marker.u<0||marker.u>1||marker.v<0||marker.v>1;marker.conceptual=false;
+    } else if (mount.type === "truss") {
       const truss = trusses.find((item) => item.id === mount.trussId);
       if (!truss) return null;
       marker.u = clamp(finite(mount.u, 0.5), 0, 1);
@@ -95,7 +97,7 @@
       : (record(plan.design.stage) ? plan.design.stage : {});
     const trusses = normalisedTrusses(plan);
     const markers = list(plan.design.rig.fixtures)
-      .map((fixture) => markerForFixture(fixture, trusses, dims))
+      .map((fixture) => markerForFixture(fixture, trusses, dims, plan.design.rig))
       .filter(Boolean);
     if (!markers.length) return null;
     return {
@@ -109,6 +111,7 @@
         fixed: markers.filter((marker) => marker.kind === "fixed").length,
         moving: markers.filter((marker) => marker.kind === "moving").length,
         laser: markers.filter((marker) => marker.kind === "laser").length,
+        mirrorBall: markers.filter((marker) => marker.kind === "mirrorball").length,
       },
     };
   }
