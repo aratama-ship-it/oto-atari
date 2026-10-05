@@ -1,6 +1,7 @@
-// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜22・§25。
+// 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜23・§25。
 // γの幾何ブロックは _delegation/gamma-src-2026-10-01/stage-first-person.js から無改変抽出。
 import { DRUM_WINDOW } from "./experience.mjs?v=20261005a";
+import { drawVocalLaser } from "./vocal-laser.mjs?v=20261005a";
 import { spinAt, pinLevelsAt, buildSpinTrack } from "../lib/mirror-ball-map.mjs?v=20261005a";
 
 const W = 12, D = 9, H = 8;
@@ -364,7 +365,7 @@ export function fixtureLevelsAt(t, expData, rig, { spin01 = 0 } = {}) {
 
 function activateProjection(view, width, height) {
   camera = view; state = view; canvasWidth = width; canvasHeight = height;
-  focal = focalFor(width, LENSES.find((lens) => lens.id === "wide").fovDeg);
+  focal = focalFor(width, LENSES.find((lens) => lens.id === "wide").fovDeg) * clamp(finite(view.lensScale, 1), .5, 3);
   setBasis();
 }
 /** DOM不要の投影契約検査用。γ世界{x:左右,y:奥行き,z:高さ}を受ける。 */
@@ -512,8 +513,8 @@ export function buildStageModel(design, rig, { overlay, plan, engine, body }) {
 }
 
 export class Stage3dRenderer {
-  // mirrorBall: 舞台にミラーボール＋ピン2灯を置くか（既定オン）。
-  constructor(canvas, { mirrorBall = true } = {}) {
+  // mirrorBall: 舞台にミラーボール＋ピン2灯を置くか。既定は操作できる本体（interactive）だけオン。外側が描く歌唱試験（interactive:false）には足さない。
+  constructor(canvas, { interactive = true, mirrorBall = interactive } = {}) {
     this.canvas = canvas; this.ctx = canvas.getContext("2d"); this.data = null;
     this.mirrorBallOn = Boolean(mirrorBall); this.mirrorTrack = null; this.mirrorInfo = null;
     this.render = window.SHOSAI_LIGHT_RENDER;
@@ -524,6 +525,7 @@ export class Stage3dRenderer {
     this.modelParts = { overlay, plan, engine: window.RIG_ENGINE, body: this.body };
     this.setRig(createDefaultRig([], { mirrorBall: this.mirrorBallOn }));
     this.setViewpoint("house-center");
+    if (!interactive) return; // 外側が回転/ピンチを扱う歌唱試験ではイベントを二重登録しない。
     let drag = null;
     canvas.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
@@ -574,6 +576,10 @@ export class Stage3dRenderer {
   }
   reset() { this.data = null; }
   setViewpoint(id) { if (VIEWPOINTS[id]) { this.viewpoint = id; this.view = { ...VIEWPOINTS[id] }; } }
+  setCamera(view) {
+    if (![view.x, view.y, view.z, view.yaw, view.pitch].every(Number.isFinite)) return;
+    this.viewpoint = "custom"; this.view = { ...view };
+  }
   resize() {
     const rect = this.canvas.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
     this.w = Math.max(1, Math.round(rect.width)); this.h = Math.max(1, Math.round(rect.height));
@@ -642,19 +648,23 @@ export class Stage3dRenderer {
     R.paintMirrorBalls(ctx, [record], P, { tMs: 0, dims: { W, D, H }, facets: R.MIRROR_BALL_FACETS[S.facets], surfaces: S.surfaces,
       rays: S.rays, topDown: false, eye: { x: this.view.x, y: this.view.z + D / 2, z: this.view.y } });
   }
-  frame(t, { playing = false } = {}) {
+  // vocal は解析/時間補間済みの {open, stretch, round, energy} (0〜1)。未指定は非表示。
+  // 煙にも呼び出し元の t を使う。レンダラー内で音源を解析・再生しない。
+  frame(t, { playing = false, vocal = null, fixtureLighting = true } = {}) {
     this.resize();
     const spin = this.mirrorTrack ? spinAt(this.mirrorTrack, t) : { env: 0, phaseDeg: 0 };
-    const ctx = this.ctx, levels = fixtureLevelsAt(t, this.data, this.rig, { spin01: spin.env });
+    const ctx = this.ctx, levels = fixtureLevelsAt(t, fixtureLighting ? this.data : null, this.rig, { spin01: spin.env });
     const pools = [...this.pools].map(([id, pool]) => ({ ...pool, ...levels.get(id) })).filter((p) => p.level > 0);
     const beams = [...this.beams].filter(([id]) => levels.get(id).level > 0)
       .map(([id, beam]) => ({ ...beamFacingView(beam, this.view), ...levels.get(id) }));
     const P = cueLightProjector(), opts = { topDown: false, tMs: t * 1000, haze: this.render.hazeAmount(35) };
     this.drawShell();
     this.render.paintPools(ctx, pools, P, opts);
-    this.render.paintWorkLight(ctx, pools, P, { ...opts, floorClip: clipCueLightSurfaces });
+    // 歌う口が出ている間は作業灯を暗くする（TOKEN_SHEET §23）。光の筋は v0.7.0 以降どおり1回だけ描く。
+    this.render.paintWorkLight(ctx, pools, P, { ...opts, dim: vocal ? .55 : 1, floorClip: clipCueLightSurfaces });
     this.paintBeams(beams, P, opts);
-    if (this.mirrorModel) this.paintMirrorBall(ctx, P, levels, spin);
+    if (fixtureLighting && this.mirrorModel) this.paintMirrorBall(ctx, P, levels, spin);
+    drawVocalLaser(ctx, vocal, t, P);
     this.drawFixtures(levels);   // γと同じく光の後に筐体を重ね、消灯中も形と向きを残す。
     // playingは共通描画器の契約として受け取る。時刻以外で光を変えない。
   }
