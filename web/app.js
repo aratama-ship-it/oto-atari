@@ -1,6 +1,6 @@
 // app.js — 音源はAudioContext、無音デモだけはperformanceを時計にし、事前計算したIntentを引いて描く。
 import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs";
-import { createDemoFeatures, DEMO_SUSTAIN_SPANS } from "./lib/demo.mjs?v=20261005a";
+import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261005a";
 import { sustainSpans } from "./lib/mirror-ball-map.mjs?v=20261005a";
 import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs";
 import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs";
@@ -162,6 +162,8 @@ function recompile() {
   ink.pointMode = rig.pointMode = state.intents.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass");
   exp.setData(state.intents.discrete, state.ft.events, { beats: state.ft.tempo && state.ft.tempo.confidence >= 0.3 ? state.ft.tempo.beats : null, sections: state.ft.sections || [] });
   // ミラーボールが回る区間（持続音）。実音源は解析結果の連続量から、無音デモは合成パターンの明示した区間。
+  // 無音デモのベースは合成パターンを舞台へ直接渡す（note 候補を装わない）。実音源は解析JSONの bass note から。
+  if (state.demo) exp.data.bassNotes = DEMO_BASS_NOTES;
   stage3d.setData(exp.data, { spans: state.demo ? DEMO_SUSTAIN_SPANS : sustainSpans(state.ft), durationSec: state.ft.source.durationSec });
   seedActivePoints(now()); state.lastT = now();
   updateStageGuide();
