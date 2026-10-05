@@ -1,8 +1,8 @@
 // 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜23・§25。
 // γの幾何ブロックは _delegation/gamma-src-2026-10-01/stage-first-person.js から無改変抽出。
-import { DRUM_WINDOW } from "./experience.mjs?v=20261005a";
-import { drawVocalLaser } from "./vocal-laser.mjs?v=20261005a";
-import { spinAt, pinLevelsAt, buildSpinTrack } from "../lib/mirror-ball-map.mjs?v=20261005a";
+import { DRUM_WINDOW } from "./experience.mjs?v=20261005b";
+import { drawVocalLaser } from "./vocal-laser.mjs?v=20261005b";
+import { spinAt, pinLevelsAt, buildSpinTrack } from "../lib/mirror-ball-map.mjs?v=20261005b";
 
 const W = 12, D = 9, H = 8;
 const FIXTURE_OUTLINE_COLOR = "#808080";
@@ -563,7 +563,8 @@ export function buildStageModel(design, rig, { overlay, plan, engine, body }) {
 
 export class Stage3dRenderer {
   // mirrorBall: 舞台にミラーボール＋ピン2灯を置くか。既定は操作できる本体（interactive）だけオン。外側が描く歌唱試験（interactive:false）には足さない。
-  constructor(canvas, { interactive = true, mirrorBall = interactive } = {}) {
+  // bassSources: 最初から置くベース灯の音高（光のデモで開く本体が起動時に模型を2回作らないため）。
+  constructor(canvas, { interactive = true, mirrorBall = interactive, bassSources = [] } = {}) {
     this.canvas = canvas; this.ctx = canvas.getContext("2d"); this.data = null;
     this.mirrorBallOn = Boolean(mirrorBall); this.mirrorTrack = null; this.mirrorInfo = null;
     this.render = window.SHOSAI_LIGHT_RENDER;
@@ -572,7 +573,7 @@ export class Stage3dRenderer {
     const plan = window.SHOSAI_STAGE_LIGHTING_PLAN_OVERLAY;
     if (!window.RIG_ENGINE || !this.render || !overlay || !plan || !this.body) throw new Error("舞台の描画部品を読み込めません。ページを再読み込みしてください");
     this.modelParts = { overlay, plan, engine: window.RIG_ENGINE, body: this.body };
-    this.setRig(createDefaultRig([], { mirrorBall: this.mirrorBallOn }));
+    this.setRig(createDefaultRig([], { mirrorBall: this.mirrorBallOn, bassSources }));
     this.setViewpoint("house-center");
     if (!interactive) return; // 外側が回転/ピンチを扱う歌唱試験ではイベントを二重登録しない。
     let drag = null;
@@ -625,7 +626,7 @@ export class Stage3dRenderer {
     this.setRig(this.rigFor(this.data));
   }
   rigFor(data) {
-    return createDefaultRig([...(data?.pointSources || []), ...(data?.points || [])], { mirrorBall: this.mirrorBallOn, bassSources: data?.bassNotes || [] });
+    return createDefaultRig([...(data?.pointSources || []), ...(data?.points || [])], { mirrorBall: this.mirrorBallOn, bassSources: data?.bassSources || data?.bassNotes || [] });
   }
   reset() { this.data = null; }
   setViewpoint(id) { if (VIEWPOINTS[id]) { this.viewpoint = id; this.view = { ...VIEWPOINTS[id] }; } }

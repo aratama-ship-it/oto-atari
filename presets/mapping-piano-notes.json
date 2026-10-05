@@ -21,6 +21,19 @@
         "level": { "from": "modelStrength01", "secondaryFrom": "mixLevel01", "secondaryWeight": 0.3, "range": [0, 1] },
         "dur": { "from": "dur", "domain": [0, 4], "range": [0, 4] }
       }
+    },
+    {
+      "id": "bass-floor-wash",
+      "on": { "event": "note", "instrument": ["bass"] },
+      "quantize": { "to": "none" },
+      "emit": {
+        "intent": "point",
+        "zone": "floor",
+        "color": "#8a7dff",
+        "x": { "from": "position01", "range": [0, 1] },
+        "level": { "from": "strength", "range": [0, 1] },
+        "dur": { "from": "dur", "domain": [0, 4], "range": [0, 4] }
+      }
     }
   ]
 }

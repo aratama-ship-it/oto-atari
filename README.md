@@ -16,7 +16,7 @@
 ```
 oto-atari/
 ├── schema/        FEATURE_TIMELINE_SPEC.md / MAPPING_SPEC.md  … 中間形式の仕様（最重要）
-├── analysis/      analyze.py（Python・librosa）/ merge_piano_notes.py（B曲候補のv2統合）/ test_analyze.py / README.md
+├── analysis/      analyze.py（Python・librosa）/ merge_piano_notes.py（B曲候補のv2統合）/ merge_bass_notes.py（ベース候補と余韻のv2統合）/ test_analyze.py / README.md
 ├── web/
 │   ├── lib/       dsp.mjs（FFT等）/ analyze-core.mjs（JS版解析器）/ mapping-engine.mjs（規則→Intent）/ validate.mjs / mirror-ball-map.mjs（舞台のミラーボールの割り振り・純粋関数）
 │   ├── renderers/ ink.mjs（塗料）/ rig.mjs（照明図）/ experience.mjs（体験表示・時刻決定型）/ stage3d.mjs（舞台3D）/ gamma-export.mjs（γ下書き）/ zones.mjs（zone→幾何）
@@ -40,9 +40,9 @@ python3 -m http.server 8973 --bind 127.0.0.1     # → http://127.0.0.1:8973/web
 3. ▶／❚❚ で再生・停止。時間軸は指でも動かせる。「体験／舞台／インク／照明図／両方」を切り替え、割り振りの規則を変更できる。
 4. 読み込んだ曲の特徴JSON・意図JSON・γ下書きを書き出せる（γは雛形JSONが必要）。無音デモは合成パターンで、音源解析結果ではないため書き出しは無効。
 
-無音デモの「ドラム＋単音」は、転がし＝キック、SS＝スネア、LEDバー＝ハット、吊りスポット＝単音アタックを試せる。実音源で単音を表示するときは、対応するnote候補のある特徴JSONとピアノ単音／ドラム＋単音の規則を使う。
+無音デモの「ドラム＋単音」は、転がし＝キック、SS＝スネア、LEDバー＝ハット、吊りスポット＝単音アタック、舞台奥の床のウォッシュ＝ベース（合成のベース進行・音高ごとに別の灯）を試せる。実音源で単音を表示するときは、対応するnote候補のある特徴JSONとピアノ単音／ドラム＋単音の規則を使う。実音源でベースを表示するときは、`analysis/merge_bass_notes.py` でベース候補（`instrumentCandidate: "bass"`）を入れた特徴JSONを読み込む（舞台表示で床奥のウォッシュが音高ごとに点き、音量の減り方で消える）。
 
-Python版の解析（より正確。拍追跡・区切り）:
+Python版の解析（より正確。拍追跡・区切り）。このMacの `~/.venvs/oto-atari` は SciPy の読み込みエラーで動かないことがある（2026-10-05）。その場合は `~/.venvs/synth-matcher/bin/python` で実行する:
 
 ```sh
 ~/.venvs/oto-atari/bin/python analysis/analyze.py "<音源>" -o "<出力>.features.json" --sr 44100

@@ -108,10 +108,12 @@ export function collectExperienceData(discrete = [], events = [], { beats = null
     .map((e) => ({ pitch: e.type === "note" ? e.pitchMidi : undefined, x: e.position01 }));
   // beats は舞台のミラーボールのピンが「キック・スネアの無い曲」で拍へ回るために保持する（時刻と拍内位置だけ）。
   const beatList = usable ? beats.map((b) => ({ t: b.t, beatInBar: b.beatInBar })) : [];
-  const bassNotes = events.filter((e) => e.type === "note" && e.instrumentCandidate === "bass")
-    .map((e) => ({ t: e.t, soundDur: e.soundDur ?? e.dur, pitch: e.pitchMidi, level: e.strength, envelope: e.release?.envelope }))
-    .sort((a, b) => a.t - b.t);
-  return { hits, points, pointSources, bassNotes, cues, maxDur, mode: points.length ? "piano" : "drums", ledBars: cls.bars, ledFallback: !usable, beats: beatList };
+  // ベース（2026-10-05）: 台数・担当位置は曲全体の bass note から決め（規則をOFFにしても動かさない）、
+  // 点灯は規則（bass-floor-wash など）を通った意図だけから作る。
+  const bassSources = events.filter((e) => e.type === "note" && e.instrumentCandidate === "bass").map((e) => ({ pitch: e.pitchMidi }));
+  const bassNotes = sorted.filter((d) => d.intent === "point" && d.srcInstrument === "bass")
+    .map((d) => ({ t: d.t, soundDur: d.srcSoundDur ?? d.dur, pitch: d.srcPitchMidi, level: clamp(d.level ?? 0, 0, 1), envelope: d.srcEnvelope }));
+  return { hits, points, pointSources, bassSources, bassNotes, cues, maxDur, mode: points.length ? "piano" : "drums", ledBars: cls.bars, ledFallback: !usable, beats: beatList };
 }
 
 /** 昇順配列 arr で arr[i].t >= t となる最初の i。 */

@@ -108,5 +108,6 @@ Intent Timeline は事前にまとめて計算できる（解析が事前処理�
 - `on.instrument: ["piano"]`（または `["bass"]`）は `instrumentCandidate` による絞り込み。`on.stem` と同様に配列または単一文字列を指定でき、未指定なら全 note を対象とする。
 - note 由来の point Intent は `srcInstrument` を保持する。元の `soundDur` があれば `srcSoundDur`、`release.envelope` があれば `srcEnvelope` にそのまま渡す。値の丸め・補間・加工は行わない。
 - `mapping-piano-notes.json` と `mapping-drums-notes.json` の note ルールは `on.instrument: ["piano"]` に限定する。既存の pitched-attack は保持する。
-- 段階1では bass point をピアノの表示・位置レール・モード判定に使わない。体験データでは note の `t`, `soundDur`（未指定なら `dur`）, `pitchMidi`, `strength`, `release.envelope` を `bassNotes: [{ t, soundDur, pitch, level, envelope }]` に保存し、描画には使わない。
+- bass point はピアノの表示・位置レール・モード判定・インク・照明図・γ下書きに使わない。舞台（3D）の床ウォッシュだけが読む（2026-10-05 v0.7.2）。体験データの `bassNotes: [{ t, soundDur, pitch, level, envelope }]` は **規則を通った bass point Intent** から作る（`soundDur`＝`srcSoundDur` が無ければ `dur`、`envelope`＝`srcEnvelope`、`level`＝Intent の level）。灯体の台数と音高→灯の担当は、規則のON/OFFで変えないよう Feature Timeline の全 bass note から `bassSources` として作る。
+- 推奨プリセット（`mapping-drums-notes.json`／`mapping-piano-notes.json`）には規則 `bass-floor-wash`（`on: { event: "note", instrument: ["bass"] }` → `point`・`zone: floor`・`x←position01`・`level←strength`・`dur←dur`）を入れる。規則を切るとベース灯は点かない。光のデモの合成ベースもこの規則が有効な時だけ点く。
 - v1 の mapping への point 混入拒否は維持する。

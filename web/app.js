@@ -1,16 +1,16 @@
 // app.js — 音源はAudioContext、無音デモだけはperformanceを時計にし、事前計算したIntentを引いて描く。
 import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs";
-import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261005a";
-import { sustainSpans } from "./lib/mirror-ball-map.mjs?v=20261005a";
-import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs";
-import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs";
+import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261005b";
+import { sustainSpans } from "./lib/mirror-ball-map.mjs?v=20261005b";
+import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261005b";
+import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261005b";
 import { InkRenderer } from "./renderers/ink.mjs";
 import { RigRenderer } from "./renderers/rig.mjs";
-import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261005a";
-import { ExperienceRenderer } from "./renderers/experience.mjs?v=20261005a";
+import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261005b";
+import { ExperienceRenderer } from "./renderers/experience.mjs?v=20261005b";
 import { buildGammaDraft, detectTemplate } from "./renderers/gamma-export.mjs";
 
-const VERSION = "0.7.1";
+const VERSION = "0.7.2";
 const $ = (id) => document.getElementById(id);
 const state = {
   audioCtx: null, buffer: null, source: null, startedAt: 0, offset: 0, playing: false,
@@ -24,7 +24,7 @@ const rig = new RigRenderer($("rigCanvas"));
 const exp = new ExperienceRenderer($("expCanvas"));
 // ミラーボールの初期状態: 既定オン。`?mirror=off` で切って開ける（旧来の舞台と見比べる・従来の検査用）。
 if (new URLSearchParams(location.search).get("mirror") === "off") $("mirrorBallToggle").checked = false;
-const stage3d = new Stage3dRenderer($("stage3dCanvas"), { mirrorBall: $("mirrorBallToggle").checked });
+const stage3d = new Stage3dRenderer($("stage3dCanvas"), { mirrorBall: $("mirrorBallToggle").checked, bassSources: DEMO_BASS_NOTES });
 const phoneMedia = matchMedia("(max-width: 699px), (max-width: 999px) and (max-height: 500px)");
 const compactMedia = matchMedia("(max-width: 1199px), (pointer: coarse)");
 const ui = { settingsOpen: false, panel: "panelSource", sourceBusy: false };
@@ -163,7 +163,10 @@ function recompile() {
   exp.setData(state.intents.discrete, state.ft.events, { beats: state.ft.tempo && state.ft.tempo.confidence >= 0.3 ? state.ft.tempo.beats : null, sections: state.ft.sections || [] });
   // ミラーボールが回る区間（持続音）。実音源は解析結果の連続量から、無音デモは合成パターンの明示した区間。
   // 無音デモのベースは合成パターンを舞台へ直接渡す（note 候補を装わない）。実音源は解析JSONの bass note から。
-  if (state.demo) exp.data.bassNotes = DEMO_BASS_NOTES;
+  if (state.demo) {
+    const bassRuleOn = state.mapping.rules.some((r) => r.id === "bass-floor-wash") && !state.disabledRules.has("bass-floor-wash");
+    exp.data.bassSources = DEMO_BASS_NOTES; exp.data.bassNotes = bassRuleOn ? DEMO_BASS_NOTES : [];
+  }
   stage3d.setData(exp.data, { spans: state.demo ? DEMO_SUSTAIN_SPANS : sustainSpans(state.ft), durationSec: state.ft.source.durationSec });
   seedActivePoints(now()); state.lastT = now();
   updateStageGuide();
