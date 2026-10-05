@@ -30,6 +30,10 @@
   /* トークン（docs/light-pool-2026-09-18/DESIGN.md の表と一致させること）。
      ★数値は照明モード（light-design/app.js の drawBeam）から持ってきたもの。勝手に変えない。 */
   const VISUAL_GAIN = 1.8;      // 図として見えるように持ち上げる倍率（照明モードと同じ）
+  // Only the basic pool/beam alpha participates in the isolated dimming trial.
+  const visualAlpha = (value) => root.STAGE_LIGHT_EVAL
+    ? root.STAGE_LIGHT_EVAL.previewAlpha(value, root.GAMMA_LIGHT_PREVIEW_MODE)
+    : clamp(value * VISUAL_GAIN, 0, 1);
   const BEAM_SOFT = 1.26;       // 縁の半影のぶん、楕円を少し広げる
   const ALPHA_CORE = 0.50;      // 中心の濃さ（2026-09-19 本人決定「全体+50%」で 0.34→0.50）
   const ALPHA_MID = 0.27;       // 芯の外（同上 0.18→0.27）
@@ -37,6 +41,17 @@
   const SOFT_DEFAULT = 2;       // 縁の柔らかさの既定（0〜10）
   const MIN_AREA_PX = 4;        // これ未満は潰れている＝その図では線にしか見えない
   const MAX_TEMP_PX = 1024;     // 濃淡用の一時キャンバスの上限
+  /* 模様・カッターの無い光だまり（長軸の減衰だけ）の一時キャンバスの上限（2026-10-05・v0.2.95）。
+     なめらかな放射グラデーション×一次の濃淡なので 512px でも画素は見分けがつかない（試験場 F-4 で実測一致）。
+     毎コマ 1024² を作っていたのを 4分の1にする。模様・カッターのある灯は従来どおり MAX_TEMP_PX（形が崩れる）。
+     調査: docs/research-2026-10-04-light-paint-perf/ */
+  const SMOOTH_POOL_TEMP_PX = 512;
+  /* 筋のシートの保持（2026-10-05・v0.2.96）。光の筋は灯・カメラ・濃淡が動かない間は毎コマ同じ絵なので、できあがった
+     シートを幾何の鍵つきで持ち、次からは貼るだけにする。★同じ鍵が2回目に現れたときだけ保存する（動く灯の毎コマ違う鍵で
+     コピーを作り続けない）。★合計の画素数に上限（8Mpx≒32MB）。古い順に捨て、捨てた canvas は 0×0 にして Safari の
+     canvas メモリを返す。鍵に入る値は絵に効くもの全部（点・色・濃さ・柔らかさ・濃淡の色止め・canvas の大きさと変換）。 */
+  const BEAM_CACHE_MAX_PX = 8000000;
+  const BEAM_CACHE_PENDING_MAX = 256;
   const BAND_ALPHA = 0.24;      // 光の帯（空気の中の筋）の濃さ。光だまりより薄い（同上 0.16→0.24）
   /* ★2026-09-19 本人決定: 筋と光だまりを**同じ比率**で上げる。片方だけ上げると、R-1 で滑らかに
      なった「筋の先と光だまりのつながり」が段差へ戻る（本人が良いと評価した点なので崩さない）。 */
@@ -199,7 +214,7 @@
     if (!Number.isFinite(ax + ay + bx + by)) return false;
     if (Math.abs(ax * by - ay * bx) < MIN_AREA_PX) return false;
 
-    const alpha = clamp(level * VISUAL_GAIN, 0, 1);
+    const alpha = visualAlpha(level);
     const soft = clamp(finite(pool.softness, SOFT_DEFAULT), 0, 10);
     const core = 0.55 - soft * 0.018, edge = 0.94 - soft * 0.035;
     const paint = (gradient, colour) => {
@@ -230,7 +245,7 @@
     /* 長軸に沿った濃淡は掛け算なので、別のキャンバスで「光だまり×減衰」を作ってから1枚で載せる。
        一時キャンバスの横向きが楕円の長軸（左が灯体に近い側＝明るい）。照明モードと同じ作り。 */
     const radius = Math.max(Math.hypot(ax, ay), Math.hypot(bx, by));
-    const size = Math.min(MAX_TEMP_PX, Math.max(8, Math.ceil(radius * 2)));
+    const size = Math.min(shaped ? MAX_TEMP_PX : SMOOTH_POOL_TEMP_PX, Math.max(8, Math.ceil(radius * 2)));
     const sheet = tempCanvas(size);
     if (!sheet) {
       ctx.fillStyle = paint(ctx.createRadialGradient(0, 0, 0, 0, 0, 1), pool.color);
@@ -459,7 +474,7 @@
     const centre = P(pool.c);
     if (!from || !centre) return false;
     const span = Math.hypot(centre.X - from.X, centre.Y - from.Y);
-    const alpha = clamp(level * VISUAL_GAIN, 0, 1);
+    const alpha = visualAlpha(level);
     /* 根元の幅（2026-09-27 実験室・本人要望「光の広がりは機材の幅から」）。pool.rootR（m）があれば、
        筋は点でなくレンズ口径の幅から始まる台形になる。無ければ従来どおり点から開く三角。 */
     const rootHalf = (() => {
@@ -523,6 +538,24 @@
          色止めを HI で割って 0〜1 に収める。掛け合わせると元の濃さ × 倍率に戻る。 */
     const stops = beamFalloff(pool, P, BEAM_FALL_STOPS, opts && opts.haze);   // opts.haze＝むらの振れ幅（hazeAmount で写した値）
     const ends = rootEnds(cornerP, cornerM);
+    /* 保持したシートがあれば貼るだけ。無ければ作り、鍵を2回見たときだけ保存する。 */
+    let cacheKey = null;
+    if (stops && typeof document !== "undefined" && ctx.canvas) {
+      const geometry = beamSheetGeometry(ctx, from, cornerP, cornerM, ends ? [ends.fromP, ends.fromM] : null);
+      if (geometry) {
+        const key = beamCacheKey(ctx, from, centre, cornerP, cornerM, ends, pool, alpha, stops);
+        const hit = beamCacheGet(key);
+        if (hit) {
+          ctx.save();
+          ctx.globalCompositeOperation = "screen";
+          ctx.drawImage(hit.canvas, 0, 0, hit.pw, hit.ph, hit.x0, hit.y0, hit.w, hit.h);
+          ctx.restore();
+          if (ends) paintRootGlow(ctx, pool, from, centre, ends, cornerP, cornerM, alpha, beamApex(ends, cornerP, cornerM));
+          return true;
+        }
+        if (beamCacheSeenBefore(key)) cacheKey = key;
+      }
+    }
     const sheet = stops ? beamSheetFor(ctx, from, cornerP, cornerM, ends ? [ends.fromP, ends.fromM] : null) : null;
 
     if (!sheet) {
@@ -568,6 +601,7 @@
     sheetCtx.globalCompositeOperation = "source-over";
     fadeBeamLanding(sheetCtx, from, cornerP, cornerM);
     sheetCtx.setTransform(1, 0, 0, 1, 0, 0);
+    if (cacheKey) beamCachePut(cacheKey, canvas, { pw, ph, x0, y0, w, h });
 
     ctx.save();
     ctx.globalCompositeOperation = "screen";
@@ -585,7 +619,7 @@
      別の断面で重ねると「2つの光が層になった」ように見える（2026-09-27 本人指摘）。 */
   function paintRootGlow(ctx, pool, from, centre, ends, cornerP, cornerM, alpha, apex) {
     if (!(alpha > 0) || !ends) return;
-    const sheet = beamSheetFor(ctx, from, cornerP, cornerM, [ends.fromP, ends.fromM]);
+    const sheet = beamSheetFor(ctx, from, cornerP, cornerM, [ends.fromP, ends.fromM], rootGlowBounds(from, centre, ends, cornerP, cornerM));
     if (!sheet) return;
     const { canvas, ctx: sc, x0, y0, w, h, pw, ph, sx, sy } = sheet;
     sc.setTransform(1, 0, 0, 1, 0, 0); sc.clearRect(0, 0, pw, ph); sc.setTransform(sx, 0, 0, sy, -x0 * sx, -y0 * sy);
@@ -596,6 +630,30 @@
     sc.globalCompositeOperation = "destination-in"; sc.fillStyle = shade; sc.fillRect(x0, y0, w, h);
     sc.globalCompositeOperation = "source-over"; sc.setTransform(1, 0, 0, 1, 0, 0);
     ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.drawImage(canvas, 0, 0, pw, ph, x0, y0, w, h); ctx.restore();
+  }
+
+  /* 根元の芯が実際に光る範囲の点（2026-10-05・v0.2.95）。芯は筋と同じ扇形を塗ってから、灯体→着地の中心の向きに
+     ROOT_FRAC まででゼロになる濃淡（destination-in）を掛ける。ROOT_FRAC より先は完全に透明なので、一時キャンバスは
+     扇形のうち「その向きの位置が ROOT_FRAC 以下」の部分だけの外接矩形で足りる（以前は筋の全体＝F-1 の2倍密度で 3.6Mpx）。
+     扇形（ends.fromP→cornerP→cornerM→ends.fromM）を半平面で切った多角形の頂点を返す。作れなければ null（従来どおり全体）。 */
+  function rootGlowBounds(from, centre, ends, cornerP, cornerM) {
+    if (!from || !centre || !ends || !ends.fromP || !ends.fromM) return null;
+    const dx = centre.X - from.X, dy = centre.Y - from.Y, len2 = dx * dx + dy * dy;
+    if (!(len2 > 1e-6)) return null;
+    const tOf = (q) => ((q.X - from.X) * dx + (q.Y - from.Y) * dy) / len2;
+    const limit = ROOT_FRAC;
+    const poly = [ends.fromP, cornerP, cornerM, ends.fromM];
+    const out = [];
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const ta = tOf(a), tb = tOf(b), ina = ta <= limit, inb = tb <= limit;
+      if (ina) out.push(a);
+      if (ina !== inb && Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) {
+        const u = (limit - ta) / (tb - ta);
+        out.push({ X: a.X + (b.X - a.X) * u, Y: a.Y + (b.Y - a.Y) * u });
+      }
+    }
+    return out.length >= 3 && out.every((q) => Number.isFinite(q.X + q.Y)) ? out.concat([from]) : null;
   }
 
   /* 筋を描くぶんだけの一時キャンバスを用意する。画面の外は切り落とす（塗る面積＝重さなので）。 */
@@ -620,12 +678,13 @@
     };
   }
 
-  function beamSheetFor(ctx, from, cornerP, cornerM, extra) {
+  /* bounds を渡すと、外接矩形の元になる点をそれに置き換える（根元の芯が光る範囲だけにする）。 */
+  function beamSheetGeometry(ctx, from, cornerP, cornerM, extra, bounds) {
     const target = ctx && ctx.canvas;
     const cw = target ? finite(target.width, 0) : 0;
     const ch = target ? finite(target.height, 0) : 0;
     if (!(cw > 0 && ch > 0)) return null;
-    const pts = [from, cornerP, cornerM].concat(Array.isArray(extra) ? extra : []);
+    const pts = Array.isArray(bounds) && bounds.length ? bounds : [from, cornerP, cornerM].concat(Array.isArray(extra) ? extra : []);
     const xs = pts.map((q) => q.X), ys = pts.map((q) => q.Y);
     if (!xs.every(Number.isFinite) || !ys.every(Number.isFinite)) return null;
     const box = canvasBoxInUserSpace(ctx, cw, ch);
@@ -640,12 +699,64 @@
     const shrink = Math.min(1, MAX_TEMP_PX / Math.max(1, w * box.sx, h * box.sy));
     const sx = box.sx * shrink, sy = box.sy * shrink;
     const pw = Math.max(1, Math.ceil(w * sx)), ph = Math.max(1, Math.ceil(h * sy));
-    const canvas = beamCanvas(pw, ph);
+    return { x0, y0, w, h, pw, ph, sx, sy };
+  }
+
+  function beamSheetFor(ctx, from, cornerP, cornerM, extra, bounds) {
+    const g = beamSheetGeometry(ctx, from, cornerP, cornerM, extra, bounds);
+    if (!g) return null;
+    const canvas = beamCanvas(g.pw, g.ph);
     if (!canvas) return null;
     const sheetCtx = canvas.getContext ? canvas.getContext("2d") : null;
     if (!sheetCtx) return null;
-    return { canvas, ctx: sheetCtx, x0, y0, w, h, pw, ph, sx, sy };
+    return { canvas, ctx: sheetCtx, ...g };
   }
+
+  /* --- 筋のシートの保持（上の BEAM_CACHE_* の説明を参照） --- */
+  const beamCache = new Map();      // 鍵 → { canvas, pw, ph, x0, y0, w, h }（Map の順序＝使った順）
+  const beamPending = new Set();    // 一度見た鍵（2回目に保存する）
+  let beamCachePx = 0;
+  const q64 = (n) => Math.round(n * 64);
+  function beamCacheKey(ctx, from, centre, cornerP, cornerM, ends, pool, alpha, stops) {
+    let m = "";
+    try { const t = typeof ctx.getTransform === "function" ? ctx.getTransform() : null; if (t) m = [t.a, t.b, t.c, t.d, t.e, t.f].map((x) => Math.round(x * 1000)).join(","); } catch (_) { m = ""; }
+    return [q64(from.X), q64(from.Y), q64(centre.X), q64(centre.Y), q64(cornerP.X), q64(cornerP.Y), q64(cornerM.X), q64(cornerM.Y),
+      ends ? [ends.fromP.X, ends.fromP.Y, ends.fromM.X, ends.fromM.Y].map(q64).join(",") : "-",
+      String(pool.color), Math.round(alpha * 1e4), finite(pool.softness, SOFT_DEFAULT),
+      ctx.canvas.width, ctx.canvas.height, m,
+      stops.map((st) => Math.round(st.at * 1e4) + ":" + Math.round(st.v * 1e3)).join(";")].join("|");
+  }
+  function beamCacheGet(key) {
+    const hit = beamCache.get(key);
+    if (hit) { beamCache.delete(key); beamCache.set(key, hit); }
+    return hit || null;
+  }
+  function beamCacheRelease(entry) {
+    beamCachePx -= entry.pw * entry.ph;
+    entry.canvas.width = 0; entry.canvas.height = 0;     // Safari の canvas メモリを返す
+  }
+  function beamCacheSeenBefore(key) {
+    if (beamPending.delete(key)) return true;
+    if (beamPending.size >= BEAM_CACHE_PENDING_MAX) beamPending.clear();
+    beamPending.add(key);
+    return false;
+  }
+  function beamCachePut(key, source, g) {
+    if (typeof document === "undefined" || g.pw * g.ph > BEAM_CACHE_MAX_PX) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = g.pw; canvas.height = g.ph;
+    const cx = canvas.getContext ? canvas.getContext("2d") : null;
+    if (!cx) return;
+    cx.drawImage(source, 0, 0);
+    beamCache.set(key, { canvas, pw: g.pw, ph: g.ph, x0: g.x0, y0: g.y0, w: g.w, h: g.h });
+    beamCachePx += g.pw * g.ph;
+    while (beamCachePx > BEAM_CACHE_MAX_PX && beamCache.size) {
+      const oldest = beamCache.keys().next().value;
+      beamCacheRelease(beamCache.get(oldest)); beamCache.delete(oldest);
+    }
+  }
+  function clearBeamCache() { beamCache.forEach(beamCacheRelease); beamCache.clear(); beamPending.clear(); beamCachePx = 0; }
+  function beamCacheStats() { return { entries: beamCache.size, px: beamCachePx, pending: beamPending.size }; }
 
   function paintBeams(ctx, pools, P, opts) {
     if (!Array.isArray(pools) || !pools.length) return 0;
@@ -1150,8 +1261,8 @@
   const api = Object.freeze({
     paintPool, paintPools, paintBeam, paintBeams, paintWorkLight, litLevelAt, paintLaser, paintLasers,
     mirrorBallFacets, mirrorBallDotsAt, mirrorBallGlintsAt, paintMirrorBalls, paintMirrorBallBody, MIRROR_BALL_FACETS, MIRROR_BALL_HANG_M,
-    beamFalloff, beamLandingTangents, fadeBeamLanding, beamSheetFor, litColorAt, tintColor, hazeAmount, hazeAt, noise3,
-    TOKENS: Object.freeze({ VISUAL_GAIN, BEAM_SOFT, ALPHA_CORE, ALPHA_MID, ALPHA_EDGE, SOFT_DEFAULT,
+    beamFalloff, beamLandingTangents, fadeBeamLanding, beamSheetFor, beamSheetGeometry, rootGlowBounds, clearBeamCache, beamCacheStats, litColorAt, tintColor, hazeAmount, hazeAt, noise3,
+    TOKENS: Object.freeze({ BEAM_CACHE_MAX_PX, SMOOTH_POOL_TEMP_PX, ROOT_FRAC, VISUAL_GAIN, BEAM_SOFT, ALPHA_CORE, ALPHA_MID, ALPHA_EDGE, SOFT_DEFAULT,
       MIN_AREA_PX, BAND_ALPHA, BAND_MIN_PX, LINE_ALPHA, LINE_MIN_PX, HOLE_BAND, HOLE_LINE_PX,
       BEAM_FALL_R0, BEAM_FALL_P, BEAM_FALL_LO, BEAM_FALL_HI, BEAM_FALL_STOPS, BEAM_FALL_NORM_T, BEAM_LANDING_FADE_START,
       HAZE_AMOUNT, HAZE_MAX, HAZE_SCALE_M, COSTUME_AMBIENT,

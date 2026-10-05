@@ -1,13 +1,13 @@
 {
   "note": "web/vendor/gamma/*.js は舞台スケッチγ（show-creative-ideas/stage-sketch-gamma・GitHub aratama-ship-it/stage-sketch-gamma）の共有部品を1バイトも変えずに複製したもの。直すときはγ側を直してから再複製し、このファイルの値を更新する。",
-  "gammaCommit": "195dc078d395f5aeb0d57a3e04cfe11705a88f52",
-  "gammaSubject": "v0.2.85: Safari で「光の筋」のシーンが 3D・舞台モードで止まる問題を直す",
-  "copiedOn": "2026-10-04",
+  "gammaCommit": "b35db5dc332b5337814b4650a2137ef51ff288ca",
+  "gammaSubject": "v0.2.97: 左上の版表示が v0.2.91 のままだった不具合を直す",
+  "copiedOn": "2026-10-05",
   "files": {
     "stage-light-render.js": {
       "source": "stage-light-render.js",
-      "sha256": "316b65af7c4c934e4d37cdc71d79334219ff5a3855176d4d9c5ce7c304c788ae",
-      "bytes": 72314
+      "sha256": "ddbbe050f3a6499304798c566c1ee0247f4b361f697db61e0e8280ef08af6b91",
+      "bytes": 79633
     },
     "rig-engine.js": {
       "source": "light-design/rig-engine.js",
@@ -21,8 +21,8 @@
     },
     "gamma-light-cue-overlay.js": {
       "source": "gamma-light-cue-overlay.js",
-      "sha256": "9a4ea3fcce11bf9dd0b0d75561615498a0e3db52b1923c1474743dbc9f0035dd",
-      "bytes": 17701
+      "sha256": "f0ff50afd076c35e2339ce6177cc836f368d954c2e28a3c95180afa420d93701",
+      "bytes": 20270
     },
     "stage-fixture-body.js": {
       "source": "stage-fixture-body.js",

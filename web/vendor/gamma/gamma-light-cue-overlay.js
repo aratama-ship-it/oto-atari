@@ -97,6 +97,29 @@
     };
   }
 
+  /* Receiver geometry also covers rays aimed into the air (no floor pool).
+     The same adapter is used by the lighting editor, stage and perspective view. */
+  function receiverFrom(fixture, light, source, target, engine, pool, degOverride) {
+    if (!fixture || !light || !source || !target || !engine || fixture.kind === "laser" || fixture.kind === "mirrorball" || fixture.mount?.type === "cyc") return null;
+    if (pool) return { ...pool, deg: engine.beamDegOf(fixture, light), level: light.level, color: light.color };
+    let from = { ...source }, to = { ...target };
+    const surface = light.surface || "floor";
+    if (surface === "floor") to.z = 0;
+    else if (surface === "back") to.y = 0;
+    const body = root.FIXTURE_BODY;
+    if (body) {
+      const geometry = fixture.kind === "moving" ? body.movingHead(from, to, { scale: 1 }) : body.parCan(from, to, { scale: 1 });
+      if (geometry?.lens) from = geometry.lens;
+    }
+    const deg = Number.isFinite(degOverride) ? degOverride : engine.beamDegOf(fixture, light);
+    const ellipse = (surface === "floor" || surface === "back") ? engine.spotEllipse(from, to, deg, surface) : null;
+    const doors = engine.frameDoors(fixture, light, surface === "back" || surface === "house" ? "z" : "y");
+    const cuts = ellipse ? doors.map(door => engine.doorCutInEllipse(door, ellipse.ea, ellipse.eb)).filter(Boolean) : [];
+    return { ...(ellipse || {}), from, to, deg, level: light.level, color: light.color, surface,
+      softness: engine.opticalSoftnessOf(fixture, light), doors, cuts,
+      gobo: light.gobo, goboAngle: light.goboAngle, goboSpin: light.goboSpin, goboSoft: light.goboSoft };
+  }
+
   function poolOf(fixture, light, marker, dims, engine) {
     if (!engine || typeof engine.spotEllipse !== "function") return null;
     if (!light || !marker || marker.kind === "laser") return null;
@@ -214,6 +237,17 @@
         ? "unset" : (light.on ? "on" : "off");
       if (state === "on") lit += 1;
       if (state === "unset") unset += 1;
+      const fixture = fixtureById.get(marker.id);
+      const pool = state === "on" ? poolOf(fixture, light, marker, dims, engine) : null;
+      const path = light && light.path;
+      const target = path && (record(path.a) ? path.a : path.kind === "poly" ? path.points?.[0] : null);
+      // Receiver rays use the editor's physical mount position. Plan markers
+      // intentionally have schematic side/floor offsets and remain unchanged.
+      const markerSource = worldOf(marker, dims);
+      const receiverSource = state === "on" && typeof engine?.fixtureWorld === "function"
+        ? engine.fixtureWorld(fixture, design.rig, dims) : markerSource;
+      const sameSource = receiverSource && markerSource && ["x", "y", "z"].every(axis => receiverSource[axis] === markerSource[axis]);
+      const receiver = state === "on" ? receiverFrom(fixture, light, receiverSource, worldOf(target, dims), engine, sameSource ? pool : null) : null;
       return {
         id: marker.id,
         kind: marker.kind,
@@ -227,7 +261,8 @@
         color: light && /^#[0-9a-f]{6}$/i.test(String(light.color)) ? light.color : "#f2ead6",
         surface: light && typeof light.surface === "string" ? light.surface : "",
         aim: state === "on" && marker.kind !== "laser" ? aimOf(light, dims) : null,
-        pool: state === "on" ? poolOf(fixtureById.get(marker.id), light, marker, dims, engine) : null,
+        pool,
+        receiver,
         laser: state === "on" ? laserOf(light, marker, dims, laserEngine) : null,
       };
     });
@@ -287,7 +322,7 @@
     };
   }
 
-  const api = Object.freeze({ build, aimOf, planShim, poolOf });
+  const api = Object.freeze({ receiverWorldVersion: 1, build, aimOf, planShim, poolOf, receiverFrom });
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.SHOSAI_STAGE_LIGHT_CUE_OVERLAY = api;
 })(typeof window !== "undefined" ? window : globalThis);
