@@ -80,6 +80,7 @@ export function collectExperienceData(discrete = [], events = [], { beats = null
   let maxDur = 0;
   for (const d of sorted) {
     if (d.intent === "point") {
+      if (d.srcInstrument === "bass") continue;
       const dur = Math.max(0, d.dur || 0);
       maxDur = Math.max(maxDur, dur);
       points.push({ t: d.t, dur, x: clamp(typeof d.x === "number" ? d.x : 0.5, 0, 1), level: clamp(d.level ?? 0.4, 0, 1), pitch: d.srcPitchMidi });
@@ -102,12 +103,15 @@ export function collectExperienceData(discrete = [], events = [], { beats = null
   });
   const cues = events.filter((e) => e.type === "drop" || e.type === "silence").map((e) => ({ t: e.t, type: e.type, dur: e.dur || 0, strength: e.strength ?? 1 })).sort((a, b) => a.t - b.t);
   // 曲全体の音程を残す。ルールをOFFにしても舞台の台数・担当位置は動かさない。
-  const pointSources = events.filter((e) => e.type === "note" ||
+  const pointSources = events.filter((e) => (e.type === "note" && e.instrumentCandidate !== "bass") ||
     (e.type === "onset" && Number.isFinite(e.position01) && e.tags?.some((tag) => tag.name === "pitched-attack")))
     .map((e) => ({ pitch: e.type === "note" ? e.pitchMidi : undefined, x: e.position01 }));
   // beats は舞台のミラーボールのピンが「キック・スネアの無い曲」で拍へ回るために保持する（時刻と拍内位置だけ）。
   const beatList = usable ? beats.map((b) => ({ t: b.t, beatInBar: b.beatInBar })) : [];
-  return { hits, points, pointSources, cues, maxDur, mode: points.length ? "piano" : "drums", ledBars: cls.bars, ledFallback: !usable, beats: beatList };
+  const bassNotes = events.filter((e) => e.type === "note" && e.instrumentCandidate === "bass")
+    .map((e) => ({ t: e.t, soundDur: e.soundDur ?? e.dur, pitch: e.pitchMidi, level: e.strength, envelope: e.release?.envelope }))
+    .sort((a, b) => a.t - b.t);
+  return { hits, points, pointSources, bassNotes, cues, maxDur, mode: points.length ? "piano" : "drums", ledBars: cls.bars, ledFallback: !usable, beats: beatList };
 }
 
 /** 昇順配列 arr で arr[i].t >= t となる最初の i。 */

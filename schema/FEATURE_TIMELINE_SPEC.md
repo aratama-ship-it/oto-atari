@@ -168,6 +168,29 @@
 
 `source.noteAnalysis` に使用モデル、版、候補数、強度の意味を記録する。v1読者はv2を明示的に拒否し、v2読者はv1も受け付ける。B試験ではBasic Pitch 0.4.0のONNX出力493件を元にし、正解MIDIがないため精度は未測定。自動生成は `analysis/merge_piano_notes.py`。
 
+### v2追加：ベースの役割候補と余韻（2026-10-04）
+
+この追加契約では上記の `instrumentCandidate` の値域を `"piano" | "bass"` に広げる（必須、欠落・その他の値は拒否）。`version` は **2 のまま**。`status` と既存フィールドの意味は変えず、`dur` は音高が有効だった長さを表す。
+
+| フィールド | 型・意味 |
+|---|---|
+| `confidence` | 任意、0〜1。ベースでは pYIN 有声スコアの中央値。正解確率ではない |
+| `confidenceKind` | `confidence` がある場合は文字列必須（例 `pyin-voiced-median`）。同じ kind 内のみ比較可 |
+| `soundDur` | 任意、正の有限秒数。発音から余韻の終端まで |
+| `release` | 任意の object。`{ status: "measured" | "unconfirmed", soundEndSec, reason, envelope }` |
+| `release.envelope` | 発音基準の相対RMS `[[dtSec, rel01], …]`。音圧や velocity ではない |
+| `source` | 任意の object。`{ method, release, stem, excerpt: [startSec, endSec] }` |
+
+検証規則:
+
+- `soundDur` があれば `soundDur ≥ dur − 0.001`、`t + soundDur ≤ source.durationSec + 0.05`。
+- `release` があれば `soundDur` 必須。`status` は `measured` または `unconfirmed`。
+- `measured` は有限の `soundEndSec` と `t + soundDur` が ±0.002 秒以内で一致し、`envelope` が必須。
+- `envelope` は1〜16点、各点は有限の非負秒数と0〜1の相対値。先頭は `[0, 1]`、dt は厳密な昇順。同じ形式検査を任意の `unconfirmed` の envelope にも適用する。
+- `unconfirmed` は `soundDur` と `dur` が ±0.001 秒以内で一致する。保留を固定秒で延長しない。
+- bass のみ `t + (soundDur ?? dur)` が次の bass note の `t` を0.01秒より大きく超えたら拒否。ピアノの和音・重なりには適用しない。
+- v1 への note 混入拒否は維持する。
+
 ## 正規化の定義（解析器間の差を減らすため・2026-09-28 追記）
 
 - `loudness`, `band.<id>`: フレームのエネルギー（振幅二乗和）を dB 化し、曲全体の **99.5 パーセンタイルをピーク**、

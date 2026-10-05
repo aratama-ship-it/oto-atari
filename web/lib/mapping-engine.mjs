@@ -40,6 +40,9 @@ export function compileIntents(ft, mapping, { limits } = {}) {
       const pal = palettes[paletteAt(t)] || {};
       const intent = { t: round3(t), intent: emit.intent, ruleId: rule.id, srcType: ev.type, srcStrength: ev.strength };
       if (ev.type === "note") {
+        intent.srcInstrument = ev.instrumentCandidate;
+        if (ev.soundDur !== undefined) intent.srcSoundDur = ev.soundDur;
+        if (ev.release?.envelope !== undefined) intent.srcEnvelope = ev.release.envelope;
         intent.srcPitchMidi = ev.pitchMidi;
         intent.srcPitchName = ev.pitchName;
         intent.srcModelStrength = ev.modelStrength01;
@@ -145,6 +148,7 @@ function matchEvents(events, on, sectionAt) {
   const tags = on.tags ? [].concat(on.tags) : null;
   const beatInBar = on.beatInBar ? new Set([].concat(on.beatInBar)) : null;
   const labels = on.section && on.section.label ? new Set([].concat(on.section.label)) : null;
+  const instruments = on.instrument ? new Set([].concat(on.instrument)) : null;
   const stems = on.stem ? new Set([].concat(on.stem)) : null;
   return events.filter((ev) => {
     if (!types.has(ev.type)) return false;
@@ -153,6 +157,7 @@ function matchEvents(events, on, sectionAt) {
     if (on.minConfidence !== undefined && (ev.confidence ?? 0) < on.minConfidence) return false;
     if (bands && !bands.has(ev.band)) return false;
     if (beatInBar && !beatInBar.has(ev.beatInBar)) return false;
+    if (instruments && !instruments.has(ev.instrumentCandidate)) return false;
     if (stems && !stems.has(ev.stem)) return false;
     if (tags) {
       const names = new Set((ev.tags || []).map((x) => (typeof x === "string" ? x : x.name)));

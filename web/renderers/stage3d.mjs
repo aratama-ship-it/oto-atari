@@ -231,7 +231,13 @@ export const STAGE_MIRROR_STYLE = Object.freeze({
   ballColor: "#f2ead6", pinColor: "#fff4dc",
   facets: "mid", surfaces: Object.freeze({ floor: true, back: true, ceil: true, side: true }), rays: true,
 });
-const fixtureColor = (f) => f.soundRole === "point" ? STAGE_POINT_STYLE.color
+// ベースの床ウォッシュ（2026-10-05・段階2・TOKEN_SHEET §27）。同音同灯・異音別灯、低音＝下手。
+export const STAGE_BASS_STYLE = Object.freeze({
+  // v=0 が奥の壁（drawShell）。壁際の床から同じ u の壁を見上げる（グラウンドロウ）。
+  count: 8, uStart: 0.14, uEnd: 0.86, v: 0.025, aimV: 0, aimHeight: 4.5,
+  beamDeg: 30, softness: 8, color: "#8a7dff", noEnvelopeTailSec: 0.12,
+});
+const fixtureColor = (f) => f.soundRole === "bass" ? STAGE_BASS_STYLE.color : f.soundRole === "point" ? STAGE_POINT_STYLE.color
   : f.soundRole === "mirror-pin" ? STAGE_MIRROR_STYLE.pinColor : f.kind === "mirrorball" ? STAGE_MIRROR_STYLE.ballColor : COLORS[f.mount.type];
 
 // 音程がある場合はそれを正本にする。表示位置の丸めや同じx値で別の音程を束ねない。
@@ -242,7 +248,7 @@ function pointIdentity(point) {
 }
 
 /** sample-lightdesign.json mid-f-041〜052 の mount/種別と、確定したLED列。 */
-export function createDefaultRig(pointSources = [], { mirrorBall = false } = {}) {
+export function createDefaultRig(pointSources = [], { mirrorBall = false, bassSources = [] } = {}) {
   const fixtures = [];
   for (const v of [0.32, 0.68]) for (const side of ["shimote", "kamite"]) for (const h of [0.55, 2.4]) {
     const no = 41 + fixtures.length, low = h === 0.55;
@@ -275,6 +281,16 @@ export function createDefaultRig(pointSources = [], { mirrorBall = false } = {})
     kind: "fixed", fixtureType: "profile-zoom", family: "profile", beamDeg: p.beamDeg, role: "吊り単音", soundRole: "point" });
   const trusses = [{ id: "bar-t-01", v: 0.5, h: 6.5, label: "照明バトン2" },
     ...p.rows.map((row, i) => ({ id: trussId(i), v: row.barV, h: p.barHeight, label: `単音スポット用バトン${i + 1}` }))];
+  const bass = STAGE_BASS_STYLE, bassFixtureIds = new Map();
+  const bassKeys = [...new Map(bassSources.filter((b) => Number.isInteger(b.pitch)).map((b) => [`midi:${b.pitch}`, b.pitch])).entries()]
+    .sort((a, b) => a[1] - b[1]);
+  if (bassKeys.length) {
+    const bassCount = Math.max(bass.count, bassKeys.length), bassId = (k) => `bass-wash-${String(k + 1).padStart(2, "0")}`;
+    bassKeys.forEach(([key], i) => bassFixtureIds.set(key, bassId(Math.round((bassKeys.length > 1 ? i / (bassKeys.length - 1) : 0.5) * (bassCount - 1)))));
+    for (let k = 0; k < bassCount; k++) fixtures.push({ id: bassId(k), no: 101 + k, name: `ベース床 ${k + 1}`,
+      mount: { type: "floor", u: bass.uStart + (bass.uEnd - bass.uStart) * k / (bassCount - 1), v: bass.v },
+      kind: "fixed", fixtureType: "led-par", family: "wash", beamDeg: bass.beamDeg, role: "ベース床", soundRole: "bass" });
+  }
   let mirror = null;
   if (mirrorBall) {
     const m = STAGE_MIRROR_STYLE;
@@ -285,7 +301,7 @@ export function createDefaultRig(pointSources = [], { mirrorBall = false } = {})
       kind: "fixed", fixtureType: "profile-zoom", family: "profile", beamDeg: m.pinBeamDeg, role: "ピン", soundRole: "mirror-pin", pinSlot: i }));
     mirror = { ballId: m.ballId, pinIds: [...m.pinIds] };
   }
-  return { trusses, fixtures, pointFixtureIds, mirror };
+  return { trusses, fixtures, pointFixtureIds, bassFixtureIds, mirror };
 }
 
 /** 球の中心（γ rig-engine.mirrorBallCentre と同じ式: 取り付け点から吊り代と半径だけ下）。 */
@@ -313,12 +329,14 @@ export function createStageDesign(rig = createDefaultRig()) {
       continue;
     }
     // 転がしは舞台奥から客席側へ。LEDは発光面と近傍のにじみだけで、照射面を持たない。
-    const aim = m.type === "floor" ? { u: m.u, v: STAGE_LIGHT_STYLE.floorAimV, hM: STAGE_LIGHT_STYLE.floorAimHeight }
+    const bassFx = f.soundRole === "bass";
+    const aim = bassFx ? { u: m.u, v: STAGE_BASS_STYLE.aimV, hM: STAGE_BASS_STYLE.aimHeight }
+      : m.type === "floor" ? { u: m.u, v: STAGE_LIGHT_STYLE.floorAimV, hM: STAGE_LIGHT_STYLE.floorAimHeight }
       : m.type === "side" ? { u: m.side === "shimote" ? 0.85 : 0.15, v: m.v, hM: 1.0 }
       : { u: m.u, v: point ? STAGE_POINT_STYLE.rows[f.pointRow].aimV : 0.5, hM: 0 };
     lights[f.id] = { on: true, level: 100, color: fixtureColor(f), surface: m.type === "side" || point ? "floor" : "air", path: { kind: "still", a: aim },
       speed: "normal", periodSec: null, offsetSec: 0, levelTo: null, beamDegTo: null, beamDeg: f.beamDeg,
-      beamEdgeSoftness: point ? STAGE_POINT_STYLE.softness : m.type === "floor" ? STAGE_LIGHT_STYLE.floorSoftness : STAGE_LIGHT_STYLE.sideSoftness,
+      beamEdgeSoftness: point ? STAGE_POINT_STYLE.softness : bassFx ? STAGE_BASS_STYLE.softness : m.type === "floor" ? STAGE_LIGHT_STYLE.floorSoftness : STAGE_LIGHT_STYLE.sideSoftness,
       gobo: "none", goboSoft: 6, goboSpin: 0, goboAngle: 0, strobe: null, shutter: null, glare: 1, groupId: null };
   }
   return { format: "shosai.light-design", stage: { ...STAGE_SIZE }, rig,
@@ -341,7 +359,7 @@ export function fixtureLevelsAt(t, expData, rig, { spin01 = 0 } = {}) {
       : hit.tag === "snare" ? remaining ** 1.5 * strength : remaining ** 2 * (3 - 2 * remaining) * (0.5 + 0.5 * strength);
     const type = { kick: "floor", snare: "side", hat: "truss" }[hit.tag];
     const ids = hit.tag === "hat" ? new Set((hit.leds || []).filter((k) => Number.isInteger(k) && k >= 0 && k < 20).map((k) => `led-bar-${String(k + 1).padStart(2, "0")}`)) : null;
-    for (const f of rig.fixtures) if (f.mount.type === type && (!ids || ids.has(f.id))) {
+    for (const f of rig.fixtures) if (f.mount.type === type && !f.soundRole && (!ids || ids.has(f.id))) {
       const value = levels.get(f.id); value.level = Math.max(value.level, life * 100);
     }
   }
@@ -358,9 +376,40 @@ export function fixtureLevelsAt(t, expData, rig, { spin01 = 0 } = {}) {
     const life = (1 - age / STAGE_POINT_STYLE.windowSec) ** STAGE_POINT_STYLE.decayPower;
     value.level = Math.max(value.level, life * clamp(finite(point.level, 0), 0, 1) * 100);
   }
+  // ベースの床ウォッシュ: 強さ×包絡（発音からの秒・ピーク比を線形補間）。包絡が無い音は長さの間保ち、短く消す。
+  const bassNotes = expData.bassNotes || [];
+  for (const note of bassNotes) {
+    if (note.t > t) break;
+    const value = rig.bassFixtureIds && levels.get(rig.bassFixtureIds.get(`midi:${note.pitch}`));
+    if (!value) continue;
+    const life = bassLifeAt(note, t - note.t);
+    if (life > 0) value.level = Math.max(value.level, life * clamp(finite(note.level, 0), 0, 1) * 100);
+  }
   // ミラーボールのピン: 回っている間の常時の明るさ＋拍（キック・スネア、無ければ拍）の閃光。
   if (rig.mirror) pinLevelsAt(t, expData, spin01).forEach((level, i) => { levels.get(rig.mirror.pinIds[i]).level = level; });
   return levels;
+}
+
+/** 発音から age 秒の相対光量（0〜1）。純粋関数。 */
+export function bassLifeAt(note, age) {
+  const dur = Math.max(0, finite(note.soundDur, 0));
+  if (age < 0) return 0;
+  const env = Array.isArray(note.envelope) && note.envelope.length ? note.envelope : null;
+  if (!env) {
+    if (age < dur) return 1;
+    const tail = STAGE_BASS_STYLE.noEnvelopeTailSec;
+    return age < dur + tail ? 1 - (age - dur) / tail : 0;
+  }
+  if (age >= dur) return 0;
+  let prev = env[0];
+  for (const point of env) {
+    if (point[0] >= age) {
+      const span = point[0] - prev[0];
+      return clamp(span > 0 ? prev[1] + (point[1] - prev[1]) * (age - prev[0]) / span : point[1], 0, 1);
+    }
+    prev = point;
+  }
+  return clamp(prev[1], 0, 1);
 }
 
 function activateProjection(view, width, height) {
@@ -542,7 +591,8 @@ export class Stage3dRenderer {
     canvas.addEventListener("pointerup", endDrag); canvas.addEventListener("pointercancel", endDrag); canvas.addEventListener("lostpointercapture", endDrag);
   }
   setRig(rig) {
-    const sameLayout = this.rig?.fixtures.length === rig.fixtures.length;
+    // 2026-10-05: 台数ではなく灯体IDの並びで比べる（ベース灯の増減で同じ台数になっても作り直す）。
+    const sameLayout = !!this.rig && this.rig.fixtures.map((f) => f.id).join() === rig.fixtures.map((f) => f.id).join();
     this.rig = rig;
     if (sameLayout) return;
     // 幾何の作り直しは曲の必要台数が変わった時だけ。再生・シーク・ルールOFFでは不要。
@@ -567,12 +617,15 @@ export class Stage3dRenderer {
   setData(expData, mirror = {}) {
     this.data = expData;
     this.mirrorSpans = mirror.spans || []; this.mirrorDuration = mirror.durationSec || 0;
-    this.setRig(createDefaultRig([...(expData?.pointSources || []), ...(expData?.points || [])], { mirrorBall: this.mirrorBallOn }));
+    this.setRig(this.rigFor(expData));
     this.rebuildMirrorTrack();
   }
   setMirrorBall(on) {
     this.mirrorBallOn = Boolean(on);
-    this.setRig(createDefaultRig([...(this.data?.pointSources || []), ...(this.data?.points || [])], { mirrorBall: this.mirrorBallOn }));
+    this.setRig(this.rigFor(this.data));
+  }
+  rigFor(data) {
+    return createDefaultRig([...(data?.pointSources || []), ...(data?.points || [])], { mirrorBall: this.mirrorBallOn, bassSources: data?.bassNotes || [] });
   }
   reset() { this.data = null; }
   setViewpoint(id) { if (VIEWPOINTS[id]) { this.viewpoint = id; this.view = { ...VIEWPOINTS[id] }; } }

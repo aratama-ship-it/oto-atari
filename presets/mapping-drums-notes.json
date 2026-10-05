@@ -162,7 +162,8 @@
     {
       "id": "piano-note-position-light",
       "on": {
-        "event": "note"
+        "event": "note",
+        "instrument": ["piano"]
       },
       "quantize": {
         "to": "none"

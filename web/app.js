@@ -92,7 +92,7 @@ async function analyzeInBrowser() {
   showProgress(1, "完了"); setTimeout(() => { $("progress").hidden = true; }, 600);
   setFeatures(ft);
 }
-function setFeatures(ft, { detectDrums = !ft.events?.some((e) => e.type === "note") } = {}) {
+function setFeatures(ft, { detectDrums = !ft.events?.some((e) => e.type === "note" && e.instrumentCandidate !== "bass") } = {}) {
   const errs = validateFeatureTimeline(ft);
   if (errs.length) { alert("解析JSONが仕様に合いません:\n" + errs.join("\n")); return; }
   // 打楽器判定は感度で何度でもやり直せるよう、判定前の形を控えておく
@@ -102,7 +102,7 @@ function setFeatures(ft, { detectDrums = !ft.events?.some((e) => e.type === "not
     refineWithDrums(ft, state.mono, state.buffer.sampleRate, { stereo: state.stereo, sensitivity: currentSensitivity(), reinforce: currentReinforce() });
   }
   state.ft = ft;
-  $("pianoNotice").hidden = !ft.events.some((e) => e.type === "note");
+  $("pianoNotice").hidden = !ft.events.some((e) => e.type === "note" && e.instrumentCandidate !== "bass");
   $("sensRow").hidden = !(state.ftBase && state.mono);
   if (state.buffer && Math.abs(ft.source.durationSec - state.buffer.duration) > 1.0) setStatus(`注意: 解析JSONの長さ ${fmt(ft.source.durationSec)} と音源 ${fmt(state.buffer.duration)} が違います（別の曲の可能性）`);
   $("facts").hidden = false;
@@ -154,12 +154,12 @@ function recompile() {
   $("mappingStats").textContent = `意図 ${state.intents.discrete.length} 件（${Object.entries(c).map(([k, v]) => `${k} ${v}`).join("・")}）＋連続 ${state.intents.continuous.length} 本 — ${Math.round(performance.now() - t0)} ms`;
   $("btnExportIntents").disabled = state.demo;
   $("btnNextEvent").disabled = !hasPlayback() || !state.intents.discrete.some((d) => d.intent !== "pulse");
-  $("btnExportGamma").disabled = state.demo || !state.gammaTemplate || state.intents.discrete.some((d) => d.intent === "point");
-  if (state.gammaTemplate && state.intents.discrete.some((d) => d.intent === "point")) $("gammaSummary").textContent = "単音の位置指定はγ下書きへ未対応";
+  $("btnExportGamma").disabled = state.demo || !state.gammaTemplate || state.intents.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass");
+  if (state.gammaTemplate && state.intents.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass")) $("gammaSummary").textContent = "単音の位置指定はγ下書きへ未対応";
   renderRules();
   ink.setSurface(state.mapping.palettes[state.mapping.startPalette]?.surface);
   ink.reset(); rig.reset();
-  ink.pointMode = rig.pointMode = state.intents.discrete.some((d) => d.intent === "point");
+  ink.pointMode = rig.pointMode = state.intents.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass");
   exp.setData(state.intents.discrete, state.ft.events, { beats: state.ft.tempo && state.ft.tempo.confidence >= 0.3 ? state.ft.tempo.beats : null, sections: state.ft.sections || [] });
   // ミラーボールが回る区間（持続音）。実音源は解析結果の連続量から、無音デモは合成パターンの明示した区間。
   stage3d.setData(exp.data, { spans: state.demo ? DEMO_SUSTAIN_SPANS : sustainSpans(state.ft), durationSec: state.ft.source.durationSec });
@@ -233,9 +233,9 @@ function stop() {
 }
 function seedActivePoints(t) {
   if (!state.intents) return;
-  for (const d of state.intents.discrete) if (d.intent === "point" && d.t <= t && t < d.t + d.dur) { ink.receive(d, t); rig.receive(d, t); }
+  for (const d of state.intents.discrete) if (d.intent === "point" && d.srcInstrument !== "bass" && d.t <= t && t < d.t + d.dur) { ink.receive(d, t); rig.receive(d, t); }
 }
-function seek(t) { const was = state.playing; stop(); state.offset = Math.max(0, Math.min(duration(), t)); ink.reset(); rig.reset(); rig.pointMode = !!state.intents?.discrete.some((d) => d.intent === "point"); seedActivePoints(state.offset); state.lastT = state.offset; if (was) play(); drawTimeline(); }
+function seek(t) { const was = state.playing; stop(); state.offset = Math.max(0, Math.min(duration(), t)); ink.reset(); rig.reset(); rig.pointMode = !!state.intents?.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass"); seedActivePoints(state.offset); state.lastT = state.offset; if (was) play(); drawTimeline(); }
 $("btnPlay").addEventListener("click", () => (state.playing ? stop() : play()));
 window.addEventListener("keydown", (e) => { if (e.code === "Space" && !["INPUT", "SELECT", "BUTTON", "TEXTAREA", "SUMMARY"].includes(document.activeElement.tagName)) { e.preventDefault(); state.playing ? stop() : play(); } });
 window.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.focus) setFocus(false); });
@@ -269,6 +269,7 @@ function frame() {
   if (it && state.playing && t > state.lastT) {
     const suppress = $("suppressStrobe").checked;
     for (let d of discreteBetween(it, state.lastT, t)) {
+      if (d.intent === "point" && d.srcInstrument === "bass") continue;
       if (suppress && d.intent === "strobe") d = { ...d, intent: "pulse", level: 0.5, decaySec: 0.3 };
       if (d.intent === "point" || state.view !== "rig") ink.receive(d, t);
       if (d.intent === "point" || state.view !== "ink") rig.receive(d, t);
@@ -357,7 +358,7 @@ function drawTimeline() {
     const L = ft.curves.loudness, step = Math.max(1, Math.floor(L.length / w));
     for (let i = 0; i < L.length; i += step) { const v = L[i]; c.fillRect(x(i * ft.clock.hopSec), h * (0.95 - v * 0.6), Math.max(1, w / (L.length / step)), h * v * 0.6); }
     // ピアノ単音候補（低い音ほど下、高い音ほど上）
-    for (const e of ft.events) if (e.type === "note") { c.fillStyle = "rgba(143,212,201,0.72)"; c.fillRect(x(e.t), h * (0.72 - e.position01 * 0.48), Math.max(1.5 * dpr, x(e.t + e.dur) - x(e.t)), 2 * dpr); }
+    for (const e of ft.events) if (e.type === "note" && e.instrumentCandidate !== "bass") { c.fillStyle = "rgba(143,212,201,0.72)"; c.fillRect(x(e.t), h * (0.72 - e.position01 * 0.48), Math.max(1.5 * dpr, x(e.t + e.dur) - x(e.t)), 2 * dpr); }
     // 拍・小節
     if (ft.tempo.confidence >= 0.3) for (const b of ft.tempo.beats) { c.fillStyle = b.beatInBar === 0 ? "rgba(245,180,0,0.55)" : "rgba(236,230,218,0.18)"; c.fillRect(x(b.t), h - (b.beatInBar === 0 ? 14 : 7) * dpr, 1, (b.beatInBar === 0 ? 14 : 7) * dpr); }
     // 打楽器判定（kick=下の帯・snare=中・hat=上）
@@ -464,10 +465,11 @@ function updateStageGuide() {
   if (state.view === "stage3d") {
     $("stageGuideTitle").textContent = "舞台（3D）";
     const spots = stage3d.rig.fixtures.filter((f) => f.soundRole === "point").length;
-    $("stageGuideText").textContent = `転がし＝キック（白青のウォッシュを客席側へ）／SS＝スネア（橙・広め）／LEDバー20本＝ハイハット（金・バーだけ）／吊りスポット${spots}台・2列＝ピアノ・プラックなどのアタック（水緑・音程ごとに別の灯、低音は左・高音は右）。${$("mirrorBallToggle").checked ? "ミラーボール＝持続音の間だけ回り、ピン2灯が拍（キック・スネア）で瞬いて反射の粒が空間を流れます。" : ""}戻りは未対応。ドラッグで見回し。`;
+    const bassWashes = stage3d.rig.fixtures.filter((f) => f.soundRole === "bass").length;
+    $("stageGuideText").textContent = `転がし＝キック（白青のウォッシュを客席側へ）／SS＝スネア（橙・広め）／LEDバー20本＝ハイハット（金・バーだけ）／吊りスポット${spots}台・2列＝ピアノ・プラックなどのアタック（水緑・音程ごとに別の灯、低音は左・高音は右）。${bassWashes ? `床奥のウォッシュ${bassWashes}台＝ベース（藍紫・音程ごとに別の灯・音量の減り方で消える）。` : ""}${$("mirrorBallToggle").checked ? "ミラーボール＝持続音の間だけ回り、ピン2灯が拍（キック・スネア）で瞬いて反射の粒が空間を流れます。" : ""}戻りは未対応。ドラッグで見回し。`;
     return;
   }
-  const point = !!state.intents?.discrete.some((d) => d.intent === "point");
+  const point = !!state.intents?.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass");
   if (state.view === "exp") {
     $("stageGuideTitle").textContent = "体験表示";
     $("stageGuideText").textContent = point
@@ -560,13 +562,15 @@ $("fileGammaTemplate").addEventListener("change", async (e) => {
     const sel = $("gammaScene"); sel.innerHTML = ""; sel.hidden = false;
     for (const s of info.design.scenes || []) { const o = document.createElement("option"); o.value = s.id; o.textContent = s.name || s.id; sel.appendChild(o); }
     $("gammaSummary").textContent = `${info.kind === "show" ? "ショーJSON" : "照明デザインJSON"}: 灯体 ${(info.design.rig && info.design.rig.fixtures || []).length} 台・シーン ${(info.design.scenes || []).length}`;
-    $("btnExportGamma").disabled = state.demo || !state.intents || state.intents.discrete.some((d) => d.intent === "point");
-    if (state.intents?.discrete.some((d) => d.intent === "point")) $("gammaSummary").textContent += "。単音の位置指定はγ下書きへ未対応";
+    $("btnExportGamma").disabled = state.demo || !state.intents || state.intents.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass");
+    if (state.intents?.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass")) $("gammaSummary").textContent += "。単音の位置指定はγ下書きへ未対応";
   } catch (err) { alert(err.message); state.gammaTemplate = null; }
 });
 $("btnExportGamma").addEventListener("click", () => {
   try {
-    const { document: out, summary } = buildGammaDraft(state.gammaTemplate, state.ft, state.intents, { sceneId: $("gammaScene").value });
+    // 段階1では bass point に出力先が無い。ピアノ point の既存拒否は維持する。
+    const gammaIntents = { ...state.intents, discrete: state.intents.discrete.filter((d) => !(d.intent === "point" && d.srcInstrument === "bass")) };
+    const { document: out, summary } = buildGammaDraft(state.gammaTemplate, state.ft, gammaIntents, { sceneId: $("gammaScene").value });
     download(`${base()}.gamma-draft.json`, out);
     $("gammaSummary").textContent = `書き出し: シーン「${summary.sceneName || summary.sceneId}」へ 登録した明かり ${summary.lxqAdded} 件${summary.cuesAdded ? `・ライトキュー ${summary.cuesAdded} 件` : ""}（${summary.times.map((x) => fmt(x.t)).join(", ")}）`;
   } catch (err) { alert(err.message); }

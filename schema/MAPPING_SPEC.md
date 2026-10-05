@@ -102,3 +102,11 @@ Intent Timeline は事前にまとめて計算できる（解析が事前処理�
 `version: 2` の mapping は `on.event: "note"` を選び、離散 `intent: "point"` を出せる。`point` は `t`, `x` 0〜1, `level` 0〜1, `dur` 秒, `color`, `zone` を持ち、同時音を別々の点として保持する。インク面・照明図とも `x=0` が低い音、`x=1` が高い音で、照明図では左右12〜88%の独立レールへ翻訳する。灯体グループの制御値とは別であり、γ下書きへの書き出しは拒否する。
 
 推奨割り振り `presets/mapping-piano-notes.json` はB曲の `position01 → x`, `modelStrength01 × 0.70 + mixLevel01 × 0.30 → level`, `dur → dur` を写す。`secondaryFrom` と `secondaryWeight` は0〜1の事象値を加重合成し、第二値が欠ければ第一値のみを使う。出力Intentはv2で、元の2値を `srcModelStrength` と `srcMixLevel` に保持する。`mixLevel01` は発音時点の原曲全体の相対音量であり、和音内の各音の実音量や元MIDIベロシティではない。拍へ量子化せず、同時発音も1秒32件まで独立に保持する。
+
+### v2追加：note の役割フィルタと由来（2026-10-04）
+
+- `on.instrument: ["piano"]`（または `["bass"]`）は `instrumentCandidate` による絞り込み。`on.stem` と同様に配列または単一文字列を指定でき、未指定なら全 note を対象とする。
+- note 由来の point Intent は `srcInstrument` を保持する。元の `soundDur` があれば `srcSoundDur`、`release.envelope` があれば `srcEnvelope` にそのまま渡す。値の丸め・補間・加工は行わない。
+- `mapping-piano-notes.json` と `mapping-drums-notes.json` の note ルールは `on.instrument: ["piano"]` に限定する。既存の pitched-attack は保持する。
+- 段階1では bass point をピアノの表示・位置レール・モード判定に使わない。体験データでは note の `t`, `soundDur`（未指定なら `dur`）, `pitchMidi`, `strength`, `release.envelope` を `bassNotes: [{ t, soundDur, pitch, level, envelope }]` に保存し、描画には使わない。
+- v1 の mapping への point 混入拒否は維持する。

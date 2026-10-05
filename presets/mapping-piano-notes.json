@@ -11,7 +11,7 @@
   "rules": [
     {
       "id": "piano-note-position-light",
-      "on": { "event": "note" },
+      "on": { "event": "note", "instrument": ["piano"] },
       "quantize": { "to": "none" },
       "emit": {
         "intent": "point",
