@@ -1,17 +1,17 @@
 // app.js — 音源はAudioContext、無音デモだけはperformanceを時計にし、事前計算したIntentを引いて描く。
 import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs";
-import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261007c";
-import { loudBarSpans } from "./lib/mirror-ball-map.mjs?v=20261007c";
-import { detectSideLayer, addSideLayerEvents } from "./lib/guitar-side.mjs?v=20261007c";
-import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261007c";
-import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261007c";
+import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261007d";
+import { loudBarSpans } from "./lib/mirror-ball-map.mjs?v=20261007d";
+import { detectSideLayer, addSideLayerEvents } from "./lib/guitar-side.mjs?v=20261007d";
+import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261007d";
+import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261007d";
 import { InkRenderer } from "./renderers/ink.mjs";
 import { RigRenderer } from "./renderers/rig.mjs";
-import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261007c";
-import { collectExperienceData } from "./renderers/experience.mjs?v=20261007c";
+import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261007d";
+import { collectExperienceData } from "./renderers/experience.mjs?v=20261007d";
 import { buildGammaDraft, detectTemplate } from "./renderers/gamma-export.mjs";
 
-const VERSION = "0.7.5";
+const VERSION = "0.7.6";
 const $ = (id) => document.getElementById(id);
 const state = {
   audioCtx: null, buffer: null, source: null, startedAt: 0, offset: 0, playing: false,
