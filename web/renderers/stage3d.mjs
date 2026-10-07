@@ -208,7 +208,7 @@ export const VIEWPOINTS = Object.freeze({
   // yawForward(90).x = -1。指示書の「符号は確かめる」に従い上手(+x)へ向ける。
   "wing-shimote": Object.freeze({ x: -7, y: 1.6, z: 0, yaw: -90, pitch: -2 }),
 });
-const COLORS = Object.freeze({ floor: "#dbe8ff", side: "#ff7e30", truss: "#ffc04e" });
+const COLORS = Object.freeze({ floor: "#dbe8ff", side: "#ff7e30", truss: "#ffe39a" });   // truss＝LEDバー。2026-10-07 夜: 金 #ffc04e → 白っぽい黄色（§43）
 export const STAGE_LIGHT_STYLE = Object.freeze({
   // 転がし（キック）。2026-10-07: 客席側へ低く向ける（旧 v0.8・高さ3m）。台数は12（γ見本4＋格子8）。TOKEN_SHEET §16・§28。
   // 2026-10-07: 転がし・SS ともスポットではなくウォッシュ、広め（本人指定・§31）。旧 転がし54°／SS 低段18°・高段40°・縁2。
@@ -223,15 +223,18 @@ export const STAGE_LIGHT_STYLE = Object.freeze({
   // radiusM／strength＝光源のまわりのにじみ（光源の奥行きでの半径m／明るさ）、wideRadiusM／wideStrength＝その外の広く薄い霞の光（目くらまし）。
   floorHalo: Object.freeze({ onDeg: 20, offDeg: 40, radiusM: 2.5, strength: 0.6, wideRadiusM: 10, wideStrength: 0.07 }),
   sideLowBeamDeg: 52, sideHighBeamDeg: 66, sideSoftness: 8,
+  // 2026-10-07 夜: SS は頭上で屋根の形＝ミラーボールの中心へ打ち上げる（§42）。球をオフにしても同じ点を狙う。
+  sideAim: Object.freeze({ u: 0.5, v: 0.62, hM: 5.9 }),
 });
 export const STAGE_POINT_STYLE = Object.freeze({
   count: 24, uStart: 0.1, uEnd: 0.9, barHeight: 6.5,
   rows: Object.freeze([Object.freeze({ barV: 0.28, aimV: 0.44 }), Object.freeze({ barV: 0.40, aimV: 0.68 })]),
   beamDeg: 10, softness: 2, color: "#b7f9ec", windowSec: 0.6, decayPower: 1.8,
 });
+// 2026-10-07 夜: 縦幅を倍・にじみを大きく濃く・芯を白く（§43）。旧 thickness 0.06・haloRadius 0.18・coreWidth 0.028・core #fff2d6・濃さ 0.36/0.65。
 const STAGE_LED_STYLE = Object.freeze({
-  length: 0.5, thickness: 0.06, emitterRatio: 0.88, coreWidth: 0.028,
-  haloRadius: 0.18, body: "#080c13", edge: "#2c2c30", core: "#fff2d6",
+  length: 0.5, thickness: 0.12, emitterRatio: 0.88, coreWidth: 0.04,
+  haloRadius: 0.5, haloMaxPx: 30, glowOuter: 0.85, glowInner: 1.0, body: "#080c13", edge: "#2c2c30", core: "#fffbf0",
 });
 // ミラーボール＋ピン2灯（2026-10-04・TOKEN_SHEET §25）。割り振りの純粋関数は lib/mirror-ball-map.mjs。
 // 球は舞台中央のバトンから吊り、ピンは同じバトンの両端（下手・上手）から球をほぼ水平に狙う（γ の light.target＝球の id）。
@@ -360,9 +363,9 @@ export function createStageDesign(rig = createDefaultRig()) {
     const aim = guitarFx ? { u: m.side === "shimote" ? G.aimU : 1 - G.aimU, v: G.aimV[f.guitarIndex] ?? 0.5, hM: G.aimH }
       : bassFx ? { u: m.u, v: STAGE_BASS_STYLE.aimV, hM: STAGE_BASS_STYLE.aimHeight }
       : m.type === "floor" ? { u: 0.5 - (m.u - 0.5) * STAGE_LIGHT_STYLE.floorCross, v: STAGE_LIGHT_STYLE.floorAimV, hM: STAGE_LIGHT_STYLE.floorAimHeight }
-      : m.type === "side" ? { u: m.side === "shimote" ? 0.85 : 0.15, v: m.v, hM: 1.0 }
+      : m.type === "side" ? { ...STAGE_LIGHT_STYLE.sideAim }   // SS: ミラーボールの中心へ（§42）
       : { u: m.u, v: point ? STAGE_POINT_STYLE.rows[f.pointRow].aimV : 0.5, hM: 0 };
-    lights[f.id] = { on: true, level: 100, color: fixtureColor(f), surface: (m.type === "side" && !guitarFx) || point ? "floor" : "air", path: { kind: "still", a: aim },
+    lights[f.id] = { on: true, level: 100, color: fixtureColor(f), surface: point ? "floor" : "air", path: { kind: "still", a: aim },   // SS は 2026-10-07 夜から空中（§42）
       speed: "normal", periodSec: null, offsetSec: 0, levelTo: null, beamDegTo: null, beamDeg: f.beamDeg,
       beamEdgeSoftness: point ? STAGE_POINT_STYLE.softness : guitarFx ? G.softness : bassFx ? STAGE_BASS_STYLE.softness : m.type === "floor" ? STAGE_LIGHT_STYLE.floorSoftness : STAGE_LIGHT_STYLE.sideSoftness,
       gobo: "none", goboSoft: 6, goboSpin: 0, goboAngle: 0, strobe: null, shutter: null, glare: 1, groupId: null };
@@ -384,7 +387,7 @@ export function fixtureLevelsAt(t, expData, rig, { spin01 = 0, pinColors = null 
     if (!window || age < 0 || age >= window) continue;
     const strength = clamp(hit.level, 0, 1), remaining = 1 - age / window;
     const life = hit.tag === "kick" ? remaining ** 2.6 * strength
-      : hit.tag === "snare" || hit.tag === "clap" ? remaining ** 1.5 * strength : remaining ** 2 * (3 - 2 * remaining) * (0.5 + 0.5 * strength);
+      : hit.tag === "snare" || hit.tag === "clap" ? remaining ** 1.5 * strength : remaining ** 2 * (3 - 2 * remaining) * (0.65 + 0.35 * strength);   // ハット: 下限を上げた（§43）
     if (hit.tag === "guitar") {   // 左の音は下手の3台、右は上手の3台、中央（x 0.35〜0.65）は両側（§36・§39）。順送りなら打点番号 n で1台ずつ（§38）
       const G = STAGE_GUITAR_STYLE, side = hit.x < G.leftBelow ? "left" : hit.x > G.rightAbove ? "right" : "both";
       const glife = (1 - age / G.windowSec) ** G.decayPower * (G.levelFloor + (1 - G.levelFloor) * strength);
@@ -482,7 +485,7 @@ function drawLedBar(ctx, p, color, level) {
   if (!(length > 0)) return;
   const px = focal / Math.max(NEAR, (ends[0].z + ends[1].z) / 2);
   const core = clamp(s.coreWidth * px, 0.9, 3);
-  const halo = clamp(s.haloRadius * px, 2.5, 12) * (0.65 + 0.35 * Math.sqrt(life));
+  const halo = clamp(s.haloRadius * px, 2.5, s.haloMaxPx) * (0.65 + 0.35 * Math.sqrt(life));
   const rgba = (hex, opacity) => {
     const rgb = parseInt(hex.slice(1), 16);
     return `rgba(${rgb >> 16 & 255},${rgb >> 8 & 255},${rgb & 255},${opacity})`;
@@ -498,8 +501,8 @@ function drawLedBar(ctx, p, color, level) {
     ctx.fillStyle = gradient; ctx.beginPath(); ctx.arc(0, 0, 1, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   };
-  glow(length / 2 + halo, halo, 0.36);
-  glow(length / 2 + halo * 0.2, core * 0.6 + halo * 0.22, 0.65);
+  glow(length / 2 + halo, halo, s.glowOuter);
+  glow(length / 2 + halo * 0.2, core * 0.6 + halo * 0.22, s.glowInner);
   ctx.strokeStyle = rgba(s.core, 0.95 * life);
   ctx.lineWidth = core; ctx.lineCap = "round";
   ctx.beginPath(); ctx.moveTo(-length / 2, 0); ctx.lineTo(length / 2, 0); ctx.stroke();
@@ -602,7 +605,7 @@ export function buildStageModel(design, rig, { overlay, plan, engine, body }) {
     f.bodyVertices = f.body ? bodyVertices(f.body) : [];
     f.beam = led ? null : beamOf(fixture, lights[f.id], f.body.lens, model.dims, engine,
       fixture.kind === "moving" ? f.body.size.headR : 0);
-    if (led || fixture.mount.type === "floor" || fixture.soundRole === "mirror-pin" || fixture.soundRole === "guitar") f.pool = null;   // ギターも空中の筋だけ   // ピンは空中の筋だけ（床の光だまりは作らない）
+    if (led || fixture.mount.type === "floor" || fixture.soundRole === "mirror-pin" || fixture.soundRole === "guitar" || lights[f.id].surface === "air") f.pool = null;   // 空中の光（転がし・ピン・ギター・SS）は床の光だまりを持たない   // ピンは空中の筋だけ（床の光だまりは作らない）
     else {
       // γ v0.2.85 以降の poolOf は FIXTURE_BODY の同じ模型でレンズ先端を自分で求める。吊り点を渡し、レンズを二重に足さない。
       const pool = overlay.poolOf(fixture, lights[f.id], f, model.dims, engine);
