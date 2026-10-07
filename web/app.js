@@ -19,7 +19,7 @@ const state = {
   gammaTemplate: null, fileName: "", focus: false, demo: false,
 };
 $("version").textContent = `v${VERSION}`;
-window.otoAtari = { state }; // 検証用（ブラウザ自動操作から状態を読む。書き換え用ではない）
+window.otoAtari = { state }; // 検証用（ブラウザ自動操作から状態を読む。書き換え用ではない）。audio は下で足す
 const ink = new InkRenderer($("inkCanvas"));
 const rig = new RigRenderer($("rigCanvas"));
 // 舞台へ渡す打点・単音・ベースのまとめ（2026-10-07 に「体験」表示を外し、データだけ残した。TOKEN_SHEET §32）。
@@ -37,7 +37,7 @@ $("mirrorBallToggle").addEventListener("change", (e) => { stage3d.setMirrorBall(
 function ctx() {
   if (!state.audioCtx) {
     const ac = new (window.AudioContext || window.webkitAudioContext)();
-    state.audioCtx = ac;
+    state.audioCtx = ac; audio.ctxCreatedMs = performance.now(); audio.ctxCount += 1;
     // Safari対策: contextの生成直後、ユーザー操作と同じ呼び出しスタックの中で
     // 同期的に resume() と「無音1サンプルの再生」を行う。Safariは resume() を呼ぶだけでなく
     // 実際に音を鳴らす操作までがユーザー操作起点でないと、後から再生してもずっと無音のままに
@@ -230,6 +230,9 @@ async function play() {
     state.startedAt = performance.now() / 1000; state.playing = true;
     state.lastT = state.offset - 0.001; updatePlayButton(); return;
   }
+  // 2026-10-07 夜: Safari は、Mac の出力先が切り替わった後も古い AudioContext を使い続けて無音になる（running のまま・時計も進む）。
+  // 一時停止からの再生で AudioContext が rebuildAfterMs より古ければ作り直す（復号済みの音源はそのまま使える）。TOKEN_SHEET §41。
+  if (state.audioCtx && performance.now() - audio.ctxCreatedMs > audio.rebuildAfterMs) rebuildAudio("context older than 10 min at play", { restart: false });
   const buffer = state.buffer, ac = ctx();
   if (ac.state !== "running") { try { await ac.resume(); } catch (_) {} }
   if (ac.state !== "running") { armAudioRecovery(`play: state=${ac.state}`); return; }
@@ -287,14 +290,28 @@ function updateDiag() {
   const ac = state.audioCtx, ua = navigator.userAgent;
   diag.el.textContent = [
     `v${VERSION}  ${/Safari/.test(ua) && !/Chrome|Chromium|CriOS/.test(ua) ? "Safari" : "other browser"}  ${ua.slice(0, 60)}`,
-    `audioCtx: ${ac ? ac.state : "(まだ作られていない)"}  currentTime=${ac ? ac.currentTime.toFixed(2) : "-"}  sampleRate=${ac ? ac.sampleRate : "-"}`,
+    `audioCtx: ${ac ? ac.state : "(まだ作られていない)"}  currentTime=${ac ? ac.currentTime.toFixed(2) : "-"}  sampleRate=${ac ? ac.sampleRate : "-"}  age=${ac ? ((performance.now() - audio.ctxCreatedMs) / 1000).toFixed(0) + "s" : "-"}  built=${audio.ctxCount}`,
     `playing=${state.playing} demo=${state.demo} offset=${state.offset.toFixed(2)} now=${now().toFixed(2)} source=${!!state.source} buffer=${state.buffer ? state.buffer.duration.toFixed(1) + "s" : "-"} file=${state.fileName || "-"}`,
     `blocked=${audio.blocked}  status: ${$("topStatus").textContent}`,
     `lastError: ${diag.lastError || "-"}`,
     ...diag.log,
   ].join("\n");
 }
-const audio = { blocked: false, armed: false };
+const audio = { blocked: false, armed: false, ctxCreatedMs: 0, ctxCount: 0, rebuildAfterMs: 10 * 60 * 1000 };
+window.otoAtari.audio = audio;
+/** AudioContext を作り直す（古いものは閉じる）。再生中なら同じ位置から再開する。ユーザー操作の中で呼ぶと Safari の解錠も兼ねる。 */
+function rebuildAudio(reason, { restart = true } = {}) {
+  const old = state.audioCtx;
+  const at = hasPlayback() && !state.demo ? now() : state.offset, was = state.playing && !state.demo;
+  if (was) stop();
+  if (old) { state.audioCtx = null; try { old.close().catch(() => {}); } catch (_) {} }
+  diagNote(`audio rebuilt (${reason})`);
+  const ac = ctx();
+  if (!state.demo) state.offset = at;
+  if (was && restart) play().then(() => { if (state.playing) setStatus("音を出し直しました"); });
+  return ac;
+}
+$("btnAudioReset").addEventListener("click", () => { if (state.demo || !state.buffer) { setStatus("音源を読み込んでから押してください"); return; } audio.blocked = false; rebuildAudio("button"); if (!state.playing) setStatus("音を出し直しました。▶ で再生します"); });
 /** 音源時計が進まない時（Safari の自動再生制限・出力先の切替など）、次のタップ／キーで AudioContext を起こし、同じ位置から再生し直す。 */
 function armAudioRecovery(reason) {
   audio.blocked = true;
@@ -305,11 +322,12 @@ function armAudioRecovery(reason) {
   const once = () => {
     for (const ev of ["pointerdown", "keydown", "touchend"]) document.removeEventListener(ev, once, true);
     audio.armed = false;
-    const ac = state.audioCtx; if (!ac) return;
-    // ユーザー操作と同じ呼び出しの中で resume と無音1サンプルの再生（Safari の解錠）
-    try { ac.resume().catch(() => {}); const s = ac.createBufferSource(); s.buffer = ac.createBuffer(1, 1, ac.sampleRate); s.connect(ac.destination); s.start(0); } catch (_) {}
-    diagNote("gesture → resume, state=" + ac.state);
+    if (!state.audioCtx) return;
+    // ユーザー操作と同じ呼び出しの中で AudioContext を作り直す（古い出力先に縛られたものを捨てる）＋無音1サンプルの再生（Safari の解錠）
     const at = now(); stop(); state.offset = at;
+    const ac = rebuildAudio("gesture after blocked", { restart: false });
+    try { ac.resume().catch(() => {}); const s = ac.createBufferSource(); s.buffer = ac.createBuffer(1, 1, ac.sampleRate); s.connect(ac.destination); s.start(0); } catch (_) {}
+    diagNote("gesture → new context, state=" + ac.state);
     play().then(() => { if (state.playing && ac.state === "running") setStatus("再開しました"); });
   };
   for (const ev of ["pointerdown", "keydown", "touchend"]) document.addEventListener(ev, once, true);

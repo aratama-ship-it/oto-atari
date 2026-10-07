@@ -81,6 +81,7 @@
       <div class="row wrap">
         <label class="check"><input type="checkbox" id="suppressStrobe"> ストロボを抑える（脈に置き換え）</label>
         <label class="check"><input type="checkbox" id="audition"> 合図音（splat の位置でクリック音。耳で検証）</label>
+        <button id="btnAudioReset" type="button" title="Safari で出力先が切り替わった後などに、音の経路を作り直します">音を出し直す</button><span class="hint">再生中なのに音が出ない時（Safari で出力先が変わった後など）</span>
         <div class="latency-control"><label for="latencyMs">遅れ補正（ms）</label><div class="number-stepper"><button id="btnLatencyMinus" type="button" aria-label="遅れ補正を5ミリ秒減らす">−</button><input type="number" id="latencyMs" value="0" step="5" min="-500" max="500" inputmode="decimal"><button id="btnLatencyPlus" type="button" aria-label="遅れ補正を5ミリ秒増やす">＋</button></div></div>
       </div>
       <div class="row wrap">
