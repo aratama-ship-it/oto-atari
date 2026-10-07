@@ -1,8 +1,8 @@
 // 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜23・§25。
 // γの幾何ブロックは _delegation/gamma-src-2026-10-01/stage-first-person.js から無改変抽出。
-import { DRUM_WINDOW } from "./experience.mjs?v=20261005b";
-import { drawVocalLaser } from "./vocal-laser.mjs?v=20261005b";
-import { spinAt, pinLevelsAt, pinColorsAt, buildSpinTrack } from "../lib/mirror-ball-map.mjs?v=20261005b";
+import { DRUM_WINDOW } from "./experience.mjs?v=20261007a";
+import { drawVocalLaser } from "./vocal-laser.mjs?v=20261007a";
+import { spinAt, pinLevelsAt, pinColorsAt, buildSpinTrack } from "../lib/mirror-ball-map.mjs?v=20261007a";
 
 const W = 12, D = 9, H = 8;
 const FIXTURE_OUTLINE_COLOR = "#808080";
