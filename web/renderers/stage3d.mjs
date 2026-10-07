@@ -212,6 +212,7 @@ const COLORS = Object.freeze({ floor: "#dbe8ff", side: "#ff7e30", truss: "#ffc04
 export const STAGE_LIGHT_STYLE = Object.freeze({
   // 転がし（キック）。2026-10-07: 客席側へ低く向ける（旧 v0.8・高さ3m）。台数は12（γ見本4＋格子8）。TOKEN_SHEET §16・§28。
   // 2026-10-07: 転がし・SS ともスポットではなくウォッシュ、広め（本人指定・§31）。旧 転がし54°／SS 低段18°・高段40°・縁2。
+  // 2026-10-07 夕: SS をもう少し広く（本人指定・§34）。低段36→52°・高段56→66°（γの上限は70°）。
   floorBeamDeg: 64, floorAimV: 1.15, floorAimHeight: 1.3, floorSoftness: 8,
   floorExtraU: Object.freeze([0.125, 0.2083, 0.375, 0.4583, 0.5417, 0.625, 0.7917, 0.875]), floorExtraV: 0.0667,
   // 2026-10-07: 中央へ向けて左右を交差させる（狙いの u = 0.5 − (u − 0.5) × floorCross）。§29。
@@ -221,7 +222,7 @@ export const STAGE_LIGHT_STYLE = Object.freeze({
   // 客席を向いた転がしは板の筋をやめて丸いにじみで描く（光軸と視線の角度 onDeg 以下で丸だけ、offDeg 以上で板だけ）。§33。
   // radiusM／strength＝光源のまわりのにじみ（光源の奥行きでの半径m／明るさ）、wideRadiusM／wideStrength＝その外の広く薄い霞の光（目くらまし）。
   floorHalo: Object.freeze({ onDeg: 20, offDeg: 40, radiusM: 2.5, strength: 0.6, wideRadiusM: 10, wideStrength: 0.07 }),
-  sideLowBeamDeg: 36, sideHighBeamDeg: 56, sideSoftness: 8,
+  sideLowBeamDeg: 52, sideHighBeamDeg: 66, sideSoftness: 8,
 });
 export const STAGE_POINT_STYLE = Object.freeze({
   count: 24, uStart: 0.1, uEnd: 0.9, barHeight: 6.5,
