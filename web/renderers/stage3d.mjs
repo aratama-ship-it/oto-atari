@@ -209,7 +209,9 @@ export const VIEWPOINTS = Object.freeze({
 });
 const COLORS = Object.freeze({ floor: "#dbe8ff", side: "#ff7e30", truss: "#ffc04e" });
 export const STAGE_LIGHT_STYLE = Object.freeze({
-  floorBeamDeg: 54, floorAimV: 0.8, floorAimHeight: 3, floorSoftness: 8,
+  // 転がし（キック）。2026-10-07: 客席側へ低く向ける（旧 v0.8・高さ3m）。台数は12（γ見本4＋格子8）。TOKEN_SHEET §16・§28。
+  floorBeamDeg: 54, floorAimV: 1.15, floorAimHeight: 1.3, floorSoftness: 8,
+  floorExtraU: Object.freeze([0.125, 0.2083, 0.375, 0.4583, 0.5417, 0.625, 0.7917, 0.875]), floorExtraV: 0.0667,
   sideLowBeamDeg: 18, sideHighBeamDeg: 40, sideSoftness: 2,
 });
 export const STAGE_POINT_STYLE = Object.freeze({
@@ -261,6 +263,9 @@ export function createDefaultRig(pointSources = [], { mirrorBall = false, bassSo
     fixtures.push({ id: `mid-f-${String(no).padStart(3, "0")}`, no, name: `転がし ${no}`,
       mount: { type: "floor", u, v }, kind: "moving", beamDeg: STAGE_LIGHT_STYLE.floorBeamDeg, fixtureType: "moving-wash", family: "moving", role: "転がし" });
   }
+  // 2026-10-07: 本人指定で転がしを3倍（12台）。γ見本の4台はそのまま、間を1/12幅（約1m）の格子で埋める（TOKEN_SHEET §28）。
+  STAGE_LIGHT_STYLE.floorExtraU.forEach((u, k) => fixtures.push({ id: `floor-kick-${String(k + 1).padStart(2, "0")}`, no: 181 + k, name: `転がし ${181 + k}`,
+    mount: { type: "floor", u, v: STAGE_LIGHT_STYLE.floorExtraV }, kind: "moving", beamDeg: STAGE_LIGHT_STYLE.floorBeamDeg, fixtureType: "moving-wash", family: "moving", role: "転がし" }));
   for (let k = 0; k < 20; k++) fixtures.push({ id: `led-bar-${String(k + 1).padStart(2, "0")}`, no: 53 + k, name: `LEDバー ${k + 1}`,
     mount: { type: "truss", trussId: "bar-t-01", u: (k + 0.5) / 20 }, kind: "fixed", fixtureType: "led-bar", family: "led", beamDeg: 40, role: "吊り" });
   const p = STAGE_POINT_STYLE;
@@ -328,7 +333,7 @@ export function createStageDesign(rig = createDefaultRig()) {
           gobo: "none", goboSoft: 6, goboSpin: 0, goboAngle: 0, strobe: null, shutter: null, glare: 1, groupId: null };
       continue;
     }
-    // 転がしは舞台奥から客席側へ。LEDは発光面と近傍のにじみだけで、照射面を持たない。
+    // 転がしは舞台奥から客席へ低く（2026-10-07・§28）。LEDは発光面と近傍のにじみだけで、照射面を持たない。
     const bassFx = f.soundRole === "bass";
     const aim = bassFx ? { u: m.u, v: STAGE_BASS_STYLE.aimV, hM: STAGE_BASS_STYLE.aimHeight }
       : m.type === "floor" ? { u: m.u, v: STAGE_LIGHT_STYLE.floorAimV, hM: STAGE_LIGHT_STYLE.floorAimHeight }
