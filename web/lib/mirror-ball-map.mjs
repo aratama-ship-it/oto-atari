@@ -13,8 +13,17 @@ export const MIRROR_MAP = Object.freeze({
   noteMinDurSec: 0.5,      // note 候補（ピアノ推定）のうち、この長さ以上は余韻も持続音として足す
   rampSec: 0.8,            // 回り始め・止まりの滑らかさ（モーターの加減速）
   trackHopSec: 0.02,       // 前計算の刻み
+  // 音の大きい区間（2026-10-07 本人指定: ミラーボールは音圧の高い場面だけ出して全体の光を増やす）。TOKEN_SHEET §30
+  loudWindowSec: 1.0,      // loudness 曲線をこの幅の移動平均でならす
+  loudPercentile: 0.7,     // ならした値が曲の上位30%（この分位点以上）
+  loudMinLevel: 0.55,      // ただし 0〜1 正規化の loudness でこれ未満は大きい区間にしない（静かな曲で常に回らないように）
+  loudMinSec: 2.0,         // これより短い区間は捨てる
+  loudMergeGapSec: 1.0,    // 区間の間がこれ以下ならつなぐ
   // ピン（球を照らす2灯）
-  pinBase: 0.5,            // 回っている間のピンの常時の明るさ（0〜1）。拍の閃光はこの上に重なる
+  pinBase: 0.75,           // 回っている間のピンの常時の明るさ（0〜1）。2026-10-07 0.5→0.75。拍の閃光はこの上に重なる
+  // ピンの色: 大きい区間に入るたび＋区間内は2小節ごと（拍が無ければ4秒ごと）に順送り。2灯は3つ離れた色。§30
+  pinColors: Object.freeze(["#fff4dc", "#3d6bff", "#ff2e4d", "#a64dff", "#2ee6ff", "#ffb21f"]),
+  pinColorBars: 2, pinColorFallbackSec: 4, pinColorOffset: 3,
   flashSec: 0.2,           // 拍の閃光の長さ
   flashPower: 2,           // 閃光の減衰の鋭さ（残り割合^power）
   beatStrength: Object.freeze({ down: 0.9, other: 0.6 }), // 拍フォールバック時の閃光の強さ（小節頭／その他）
@@ -174,6 +183,55 @@ export function pinFlashAt(t, data, opts = {}) {
 export function pinLevelsAt(t, data, spin01 = 0, opts = {}) {
   const M = { ...MIRROR_MAP, ...opts };
   if (!data || (data.cues || []).some((c) => c.type === "silence" && t >= c.t && t <= c.t + c.dur)) return [0, 0];
-  const base = M.pinBase * clamp(finite(spin01, 0), 0, 1);
-  return pinFlashAt(t, data, M).map((flash) => Math.round(clamp(Math.max(base, flash), 0, 1) * 1000) / 10);
+  const out01 = clamp(finite(spin01, 0), 0, 1), base = M.pinBase * out01;
+  // 2026-10-07: 球が出ている（回っている）間だけ光る。区間の外では拍の閃光も出さない（回り始め・止まりは out01 で滑らか）。
+  return pinFlashAt(t, data, M).map((flash) => Math.round(clamp(Math.max(base, flash * out01), 0, 1) * 1000) / 10);
+}
+
+/**
+ * 音の大きい区間 [{start,end}]（秒・昇順・重ならない）。純粋関数（2026-10-07）。
+ * loudness を loudWindowSec でならし、曲の loudPercentile 分位点（と loudMinLevel の大きい方）以上の区間を取り、
+ * 短い隙間をつないで短い区間を捨て、無音（silence）を除く。楽器や構成の判定ではない（曲内の相対的な大きさ）。
+ */
+export function loudSpans(ft, opts = {}) {
+  const M = { ...MIRROR_MAP, ...opts };
+  const hop = finite(ft?.clock?.hopSec, 0), L = ft?.curves?.loudness, duration = finite(ft?.source?.durationSec, 0);
+  if (!(hop > 0) || !Array.isArray(L) || L.length < 2) return [];
+  const half = Math.max(1, Math.round(M.loudWindowSec / hop / 2)), sum = new Float64Array(L.length + 1);
+  for (let i = 0; i < L.length; i++) sum[i + 1] = sum[i] + finite(L[i], 0);
+  const smooth = Array.from(L, (_, i) => { const a = Math.max(0, i - half), b = Math.min(L.length, i + half); return (sum[b] - sum[a]) / (b - a); });
+  const sorted = [...smooth].sort((a, b) => a - b);
+  const threshold = Math.max(M.loudMinLevel, sorted[Math.floor(M.loudPercentile * (sorted.length - 1))]);
+  const raw = [];
+  let start = -1;
+  for (let i = 0; i <= smooth.length; i++) {
+    const on = i < smooth.length && smooth[i] >= threshold;
+    if (on && start < 0) start = i;
+    if (!on && start >= 0) { raw.push({ start: start * hop, end: i * hop }); start = -1; }
+  }
+  let spans = mergeSpans(raw, M.loudMergeGapSec).filter((p) => p.end - p.start >= M.loudMinSec);
+  const silences = (ft?.events || []).filter((e) => e.type === "silence" && finite(e.dur, 0) > 0).map((e) => ({ start: e.t, end: e.t + e.dur }));
+  for (const q of silences) spans = spans.flatMap((p) => q.end <= p.start || q.start >= p.end ? [p]
+    : [...(q.start > p.start ? [{ start: p.start, end: q.start }] : []), ...(q.end < p.end ? [{ start: q.end, end: p.end }] : [])]);
+  return duration > 0 ? spans.map((p) => ({ start: clamp(p.start, 0, duration), end: clamp(p.end, 0, duration) })).filter((p) => p.end > p.start) : spans;
+}
+
+/**
+ * ピン2灯の色（時刻 t・純粋関数・2026-10-07）。大きい区間に入るたびに1つ進み、区間内は pinColorBars 小節ごと
+ * （拍＝beats の beatInBar 0 を数える。拍が無ければ pinColorFallbackSec 秒ごと）に1つ進む。2灯目は pinColorOffset 先の色。
+ */
+export function pinColorsAt(t, spans = [], beats = [], opts = {}) {
+  const M = { ...MIRROR_MAP, ...opts }, n = M.pinColors.length;
+  const downbeats = (beats || []).filter((b) => b.beatInBar === 0).map((b) => b.t);
+  let count = 0;
+  for (const s of spans || []) {
+    if (s.start > t) break;
+    const until = Math.min(t, s.end);
+    count += 1;
+    const inside = downbeats.filter((x) => x > s.start && x <= until);
+    if (downbeats.length) count += Math.floor(inside.length / M.pinColorBars);
+    else count += Math.floor(Math.max(0, until - s.start) / M.pinColorFallbackSec);
+  }
+  const k = Math.max(0, count - 1);
+  return [M.pinColors[k % n], M.pinColors[(k + M.pinColorOffset) % n]];
 }

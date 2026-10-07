@@ -2,7 +2,7 @@
 // γの幾何ブロックは _delegation/gamma-src-2026-10-01/stage-first-person.js から無改変抽出。
 import { DRUM_WINDOW } from "./experience.mjs?v=20261005b";
 import { drawVocalLaser } from "./vocal-laser.mjs?v=20261005b";
-import { spinAt, pinLevelsAt, buildSpinTrack } from "../lib/mirror-ball-map.mjs?v=20261005b";
+import { spinAt, pinLevelsAt, pinColorsAt, buildSpinTrack } from "../lib/mirror-ball-map.mjs?v=20261005b";
 
 const W = 12, D = 9, H = 8;
 const FIXTURE_OUTLINE_COLOR = "#808080";
@@ -197,6 +197,7 @@ let forward = { x: 0, y: 0, z: -1 }, right = { x: 1, y: 0, z: 0 }, up = { x: 0, 
   }
 
 // 以下は音アタリ固有のアダプタ（γの抜粋ではない）。
+const hexToRgb = (hex) => { const n = parseInt(String(hex).replace("#", ""), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
 export const STAGE_SIZE = Object.freeze({ W, D, H });
 export const VIEWPOINTS = Object.freeze({
   "house-center": Object.freeze({ x: 0, y: 1.35, z: 10.7, yaw: 180, pitch: -2 }),
@@ -210,9 +211,14 @@ export const VIEWPOINTS = Object.freeze({
 const COLORS = Object.freeze({ floor: "#dbe8ff", side: "#ff7e30", truss: "#ffc04e" });
 export const STAGE_LIGHT_STYLE = Object.freeze({
   // 転がし（キック）。2026-10-07: 客席側へ低く向ける（旧 v0.8・高さ3m）。台数は12（γ見本4＋格子8）。TOKEN_SHEET §16・§28。
-  floorBeamDeg: 54, floorAimV: 1.15, floorAimHeight: 1.3, floorSoftness: 8,
+  // 2026-10-07: 転がし・SS ともスポットではなくウォッシュ、広め（本人指定・§31）。旧 転がし54°／SS 低段18°・高段40°・縁2。
+  floorBeamDeg: 64, floorAimV: 1.15, floorAimHeight: 1.3, floorSoftness: 8,
   floorExtraU: Object.freeze([0.125, 0.2083, 0.375, 0.4583, 0.5417, 0.625, 0.7917, 0.875]), floorExtraV: 0.0667,
-  sideLowBeamDeg: 18, sideHighBeamDeg: 40, sideSoftness: 2,
+  // 2026-10-07: 中央へ向けて左右を交差させる（狙いの u = 0.5 − (u − 0.5) × floorCross）。§29。
+  floorCross: 0.6,
+  // 逆光の目くらまし: 光が見ている人の方を向くほど、レンズに強いにじみを足す（γの部品には無い・音アタリ側の描画）。§29。
+  floorGlare: Object.freeze({ strength: 0.9, power: 4, radiusM: 0.9 }),
+  sideLowBeamDeg: 36, sideHighBeamDeg: 56, sideSoftness: 8,
 });
 export const STAGE_POINT_STYLE = Object.freeze({
   count: 24, uStart: 0.1, uEnd: 0.9, barHeight: 6.5,
@@ -256,7 +262,7 @@ export function createDefaultRig(pointSources = [], { mirrorBall = false, bassSo
     const no = 41 + fixtures.length, low = h === 0.55;
     fixtures.push({ id: `mid-f-${String(no).padStart(3, "0")}`, no, name: `SS ${no}`,
       mount: { type: "side", side, v, h }, kind: "fixed", beamDeg: low ? STAGE_LIGHT_STYLE.sideLowBeamDeg : STAGE_LIGHT_STYLE.sideHighBeamDeg,
-      fixtureType: low ? "led-par" : "profile-zoom", family: low ? "wash" : "profile", role: low ? "SS低段" : "SS高段" });
+      fixtureType: "led-par", family: "wash", role: low ? "SS低段" : "SS高段" });   // 2026-10-07: 高段もウォッシュ（旧 profile-zoom）
   }
   for (const [u, v] of [[0.3, 0.0667], [0.7, 0.0667], [0.0417, 0.0889], [0.9583, 0.0889]]) {
     const no = 41 + fixtures.length;
@@ -336,7 +342,7 @@ export function createStageDesign(rig = createDefaultRig()) {
     // 転がしは舞台奥から客席へ低く（2026-10-07・§28）。LEDは発光面と近傍のにじみだけで、照射面を持たない。
     const bassFx = f.soundRole === "bass";
     const aim = bassFx ? { u: m.u, v: STAGE_BASS_STYLE.aimV, hM: STAGE_BASS_STYLE.aimHeight }
-      : m.type === "floor" ? { u: m.u, v: STAGE_LIGHT_STYLE.floorAimV, hM: STAGE_LIGHT_STYLE.floorAimHeight }
+      : m.type === "floor" ? { u: 0.5 - (m.u - 0.5) * STAGE_LIGHT_STYLE.floorCross, v: STAGE_LIGHT_STYLE.floorAimV, hM: STAGE_LIGHT_STYLE.floorAimHeight }
       : m.type === "side" ? { u: m.side === "shimote" ? 0.85 : 0.15, v: m.v, hM: 1.0 }
       : { u: m.u, v: point ? STAGE_POINT_STYLE.rows[f.pointRow].aimV : 0.5, hM: 0 };
     lights[f.id] = { on: true, level: 100, color: fixtureColor(f), surface: m.type === "side" || point ? "floor" : "air", path: { kind: "still", a: aim },
@@ -349,7 +355,7 @@ export function createStageDesign(rig = createDefaultRig()) {
 }
 
 /** leds[] は0始まり。純粋関数: cue優先・未来の打点は不使用・重複はmax。 */
-export function fixtureLevelsAt(t, expData, rig, { spin01 = 0 } = {}) {
+export function fixtureLevelsAt(t, expData, rig, { spin01 = 0, pinColors = null } = {}) {
   const levels = new Map(rig.fixtures.map((f) => [f.id, { level: 0, color: fixtureColor(f) }]));
   if (!expData || expData.cues.some((c) => c.type === "silence" && t >= c.t && t <= c.t + c.dur)) return levels;
   const hits = expData.hits;
@@ -391,7 +397,7 @@ export function fixtureLevelsAt(t, expData, rig, { spin01 = 0 } = {}) {
     if (life > 0) value.level = Math.max(value.level, life * clamp(finite(note.level, 0), 0, 1) * 100);
   }
   // ミラーボールのピン: 回っている間の常時の明るさ＋拍（キック・スネア、無ければ拍）の閃光。
-  if (rig.mirror) pinLevelsAt(t, expData, spin01).forEach((level, i) => { levels.get(rig.mirror.pinIds[i]).level = level; });
+  if (rig.mirror) pinLevelsAt(t, expData, spin01).forEach((level, i) => { const v = levels.get(rig.mirror.pinIds[i]); v.level = level; if (pinColors) v.color = pinColors[i]; });
   return levels;
 }
 
@@ -654,11 +660,12 @@ export class Stage3dRenderer {
     fillPoly(ctx, floor, "#1A202B", "#2C2C30", 1);
     for (const bar of this.rig.trusses) line3(ctx, toWorld(0, bar.v, W, D, bar.h), toWorld(1, bar.v, W, D, bar.h), "#2C2C30", 2);
   }
-  drawFixtures(levels) {
+  drawFixtures(levels, keep = null) {
     const P = cueLightProjector();
     const fixtures = this.model.fixtures.map((marker) => ({ marker, point: toWorld(marker.u, marker.v, W, D, marker.h) }))
       .sort((a,b) => toCamera(b.point).z - toCamera(a.point).z);
     for (const { marker, point } of fixtures) {
+      if (keep && !keep(toCamera(point).z)) continue;
       const value = levels.get(marker.id), led = marker.id.startsWith("led-bar-");
       const alpha = value.level / 100;
       if (led) {
@@ -699,11 +706,42 @@ export class Stage3dRenderer {
       ctx.restore();
     }
   }
+  /** 視点から見た球の中心の奥行き（灯体の描く順を球の前後で分けるため）。 */
+  mirrorBallDepth() {
+    const c = mirrorBallCentreOf(this.rig);
+    return c ? toCamera(toWorld(c.u, c.v, W, D, c.hM)).z : null;
+  }
+  /** 転がし（キック）のレンズのにじみ。光軸が視点を向くほど強く大きい（逆光の目くらまし・§29）。時刻 t の光量だけで決まる。 */
+  paintFloorGlare(levels) {
+    const g = STAGE_LIGHT_STYLE.floorGlare, ctx = this.ctx, P = cueLightProjector();
+    if (!(g.strength > 0)) return;
+    const eye = { x: this.view.x, y: this.view.z + D / 2, z: this.view.y };
+    ctx.save(); ctx.globalCompositeOperation = "lighter";
+    for (const f of this.model.fixtures) {
+      const fixture = this.rig.fixtures.find((x) => x.id === f.id);
+      if (!fixture || fixture.mount.type !== "floor" || fixture.soundRole || !f.beam) continue;
+      const value = levels.get(f.id), level = value ? value.level / 100 : 0;
+      if (!(level > 0)) continue;
+      const from = f.beam.from, to = f.beam.to;
+      const axis = { x: to.x - from.x, y: to.y - from.y, z: to.z - from.z }, toEye = { x: eye.x - from.x, y: eye.y - from.y, z: eye.z - from.z };
+      const la = Math.hypot(axis.x, axis.y, axis.z), le = Math.hypot(toEye.x, toEye.y, toEye.z);
+      const facing = (axis.x * toEye.x + axis.y * toEye.y + axis.z * toEye.z) / (la * le);
+      if (!(facing > 0)) continue;
+      const at = P(from); if (!at) continue;
+      const depth = toCamera({ x: from.x, y: from.z, z: from.y - D / 2 }).z;
+      const k = facing ** g.power, r = g.radiusM * focal / depth * (0.35 + 0.65 * k), a = Math.min(1, g.strength * level * k);
+      const [cr, cg, cb] = hexToRgb(value.color);
+      const grad = ctx.createRadialGradient(at.X, at.Y, 0, at.X, at.Y, r);
+      grad.addColorStop(0, `rgba(255,255,255,${a})`); grad.addColorStop(0.25, `rgba(${cr},${cg},${cb},${a * 0.55})`); grad.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+      ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(at.X, at.Y, r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
   /** 球の体と反射の粒。回転は rpm 0＋角度（持続音の積分）で渡すので、時刻だけで決まりシークで同じ絵になる。 */
   paintMirrorBall(ctx, P, levels, spin) {
     const { ball, pins } = this.mirrorModel, S = STAGE_MIRROR_STYLE, R = this.render;
     const record = { ...ball, rpm: 0, phaseDeg: spin.phaseDeg,
-      sources: pins.map((pin) => ({ from: pin.from, color: S.pinColor, level: levels.get(pin.id).level, beamDeg: pin.beamDeg })).filter((src) => src.level > 0) };
+      sources: pins.map((pin) => ({ from: pin.from, color: levels.get(pin.id).color || S.pinColor, level: levels.get(pin.id).level, beamDeg: pin.beamDeg })).filter((src) => src.level > 0) };
     R.paintMirrorBalls(ctx, [record], P, { tMs: 0, dims: { W, D, H }, facets: R.MIRROR_BALL_FACETS[S.facets], surfaces: S.surfaces,
       rays: S.rays, topDown: false, eye: { x: this.view.x, y: this.view.z + D / 2, z: this.view.y } });
   }
@@ -712,7 +750,8 @@ export class Stage3dRenderer {
   frame(t, { playing = false, vocal = null, fixtureLighting = true } = {}) {
     this.resize();
     const spin = this.mirrorTrack ? spinAt(this.mirrorTrack, t) : { env: 0, phaseDeg: 0 };
-    const ctx = this.ctx, levels = fixtureLevelsAt(t, fixtureLighting ? this.data : null, this.rig, { spin01: spin.env });
+    const pinColors = this.mirrorModel ? pinColorsAt(t, this.mirrorSpans, this.data?.beats) : null;
+    const ctx = this.ctx, levels = fixtureLevelsAt(t, fixtureLighting ? this.data : null, this.rig, { spin01: spin.env, pinColors });
     const pools = [...this.pools].map(([id, pool]) => ({ ...pool, ...levels.get(id) })).filter((p) => p.level > 0);
     const beams = [...this.beams].filter(([id]) => levels.get(id).level > 0)
       .map(([id, beam]) => ({ ...beamFacingView(beam, this.view), ...levels.get(id) }));
@@ -722,9 +761,16 @@ export class Stage3dRenderer {
     // 歌う口が出ている間は作業灯を暗くする（TOKEN_SHEET §23）。光の筋は v0.7.0 以降どおり1回だけ描く。
     this.render.paintWorkLight(ctx, pools, P, { ...opts, dim: vocal ? .55 : 1, floorClip: clipCueLightSurfaces });
     this.paintBeams(beams, P, opts);
-    if (fixtureLighting && this.mirrorModel) this.paintMirrorBall(ctx, P, levels, spin);
+    // 2026-10-07: 球は客席側（v=0.62）にあるので、球より奥の灯体の後に描き、手前の灯体だけを球の上に重ねる。
+    const ballDepth = fixtureLighting && this.mirrorModel ? this.mirrorBallDepth() : null;
     drawVocalLaser(ctx, vocal, t, P);
-    this.drawFixtures(levels);   // γと同じく光の後に筐体を重ね、消灯中も形と向きを残す。
+    if (ballDepth == null) this.drawFixtures(levels);   // γと同じく光の後に筐体を重ね、消灯中も形と向きを残す。
+    else {
+      this.drawFixtures(levels, (depth) => depth >= ballDepth);
+      this.paintMirrorBall(ctx, P, levels, spin);
+      this.drawFixtures(levels, (depth) => depth < ballDepth);
+    }
+    this.paintFloorGlare(levels);
     // playingは共通描画器の契約として受け取る。時刻以外で光を変えない。
   }
 }
