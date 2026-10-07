@@ -63,7 +63,11 @@ export function compileIntents(ft, mapping, { limits } = {}) {
     }
   }
   discrete.sort((a, b) => a.t - b.t);
-  const thinned = thinPerSecond(discrete, maxPerSec);
+  // 規則が自分の上限（limit.maxPerSec）を持つ時は、その規則の中だけで間引き、全体の上限には数えない（2026-10-07・ギター）。
+  const ownLimit = new Map(rules.filter((r) => r.limit && r.limit.maxPerSec > 0).map((r) => [r.id, r.limit.maxPerSec]));
+  const shared = discrete.filter((d) => !ownLimit.has(d.ruleId));
+  const thinned = [...thinPerSecond(shared, maxPerSec), ...[...ownLimit].flatMap(([id, cap]) => thinPerSecond(discrete.filter((d) => d.ruleId === id), cap))]
+    .sort((a, b) => a.t - b.t);
 
   // 3) 連続 Intent（曲線を事前にスムージングした配列にする）
   const continuous = [];

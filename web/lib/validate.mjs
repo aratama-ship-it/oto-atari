@@ -86,6 +86,7 @@ export function validateMapping(m) {
     if (r.emit && (r.emit.intent === "wash" || r.emit.intent === "haze") && !(r.on && r.on.curve)) e.push(`rules[${i}]: ${r.emit.intent} は on.curve が必要`);
     if (r.emit && r.emit.intent === "palette" && !(r.emit.name || (r.emit.cycle && r.emit.cycle.length))) e.push(`rules[${i}]: palette は name か cycle が必要`);
     if (r.quantize && !["none", "beat", "half", "bar"].includes(r.quantize.to)) e.push(`rules[${i}].quantize.to が不正`);
+    if (r.limit !== undefined && !(r.limit && Number.isInteger(r.limit.maxPerSec) && r.limit.maxPerSec > 0)) e.push(`rules[${i}].limit.maxPerSec は正の整数`);
   });
   return e;
 }

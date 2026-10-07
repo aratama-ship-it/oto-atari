@@ -2,8 +2,9 @@
 // 2026-10-07: 「体験」表示（ExperienceRenderer：閃光・稲妻・粒子・上辺のLEDバー）は本人指定で外した（design/TOKEN_SHEET.md §32）。
 // 描画コードは v0.7.2（commit 44d20c9）の同名ファイルにある。ファイル名と collectExperienceData の名前は既存の参照を保つため据え置く。
 
-const DRUM_TAGS = ["kick", "snare", "hat"];
-const DRUM_WINDOW = { kick: 0.22, snare: 0.32, hat: 0.42 };
+// 打点として舞台へ渡す印。guitar は左右に振られた音（guitar-side.mjs・TOKEN_SHEET §36）で、x（0＝左・1＝右）で側を決める。
+const DRUM_TAGS = ["kick", "snare", "hat", "guitar"];
+const DRUM_WINDOW = { kick: 0.22, snare: 0.32, hat: 0.42, guitar: 0.35 };
 const SAME_HIT_SEC = 0.01;
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -81,10 +82,11 @@ export function collectExperienceData(discrete = [], events = [], { beats = null
       maxDur = Math.max(maxDur, dur);
       points.push({ t: d.t, dur, x: clamp(typeof d.x === "number" ? d.x : 0.5, 0, 1), level: clamp(d.level ?? 0.4, 0, 1), pitch: d.srcPitchMidi });
     } else if (DRUM_TAGS.includes(d.srcTag)) {
-      const last = lastByTag[d.srcTag];
+      const key = d.srcTag === "guitar" ? `guitar:${typeof d.x === "number" && d.x < 0.5 ? "L" : "R"}` : d.srcTag;   // ギターは左右別々に数える
+      const last = lastByTag[key];
       if (last !== undefined && d.t - last <= SAME_HIT_SEC) continue;
-      lastByTag[d.srcTag] = d.t;
-      hits.push({ t: d.t, tag: d.srcTag, level: clamp(d.srcStrength ?? d.size ?? 0.5, 0.2, 1), x: typeof d.x === "number" ? d.x : 0.5 });
+      lastByTag[key] = d.t;
+      hits.push({ t: d.t, tag: d.srcTag, level: d.srcTag === "guitar" ? clamp(d.srcStrength ?? 0, 0, 1) : clamp(d.srcStrength ?? d.size ?? 0.5, 0.2, 1), x: typeof d.x === "number" ? d.x : 0.5 });
     }
   }
   // ハットの LED 割当: 小節ごとの刻み N を先読みで決め、表／裏／3連／16分のスロットをバー番号へ写す

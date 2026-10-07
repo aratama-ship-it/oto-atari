@@ -157,6 +157,44 @@
         "zone": "all",
         "level": 0.45
       }
+    },
+    {
+      "id": "guitar-side-beam",
+      "on": {
+        "event": "onset",
+        "tags": [
+          "guitar"
+        ],
+        "minConfidence": 0.4
+      },
+      "quantize": {
+        "to": "none"
+      },
+      "limit": {
+        "maxPerSec": 10
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "mid",
+        "color": "#ff3fb4",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.15,
+            0.5
+          ]
+        },
+        "weight": 0.25,
+        "decaySec": 0.6,
+        "spread": 0.4,
+        "x": {
+          "from": "position01",
+          "range": [
+            0,
+            1
+          ]
+        }
+      }
     }
   ]
 }

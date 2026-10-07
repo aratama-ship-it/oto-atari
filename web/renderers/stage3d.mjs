@@ -244,12 +244,17 @@ export const STAGE_MIRROR_STYLE = Object.freeze({
   facets: "mid", surfaces: Object.freeze({ floor: true, back: true, ceil: true, side: true }), rays: true,
 });
 // ベースの床ウォッシュ（2026-10-05・段階2・TOKEN_SHEET §27）。同音同灯・異音別灯、低音＝下手。
+// 左右に振られたギター（guitar-side.mjs）→ 舞台の横からビーム（2026-10-07・TOKEN_SHEET §36）。左の音＝下手、右の音＝上手。
+export const STAGE_GUITAR_STYLE = Object.freeze({
+  color: "#ff3fb4", beamDeg: 6, softness: 2, mountV: Object.freeze([0.2, 0.5, 0.8]), mountH: 3.0,
+  aimU: 0.9, aimV: Object.freeze([0.05, 0.5, 0.95]), aimH: 5.5, windowSec: 0.35, decayPower: 1.6,
+});
 export const STAGE_BASS_STYLE = Object.freeze({
   // v=0 が奥の壁（drawShell）。壁際の床から同じ u の壁を見上げる（グラウンドロウ）。
   count: 8, uStart: 0.14, uEnd: 0.86, v: 0.025, aimV: 0, aimHeight: 4.5,
   beamDeg: 30, softness: 8, color: "#8a7dff", noEnvelopeTailSec: 0.12,
 });
-const fixtureColor = (f) => f.soundRole === "bass" ? STAGE_BASS_STYLE.color : f.soundRole === "point" ? STAGE_POINT_STYLE.color
+const fixtureColor = (f) => f.soundRole === "bass" ? STAGE_BASS_STYLE.color : f.soundRole === "point" ? STAGE_POINT_STYLE.color : f.soundRole === "guitar" ? STAGE_GUITAR_STYLE.color
   : f.soundRole === "mirror-pin" ? STAGE_MIRROR_STYLE.pinColor : f.kind === "mirrorball" ? STAGE_MIRROR_STYLE.ballColor : COLORS[f.mount.type];
 
 // 音程がある場合はそれを正本にする。表示位置の丸めや同じx値で別の音程を束ねない。
@@ -276,6 +281,11 @@ export function createDefaultRig(pointSources = [], { mirrorBall = false, bassSo
   // 2026-10-07: 本人指定で転がしを3倍（12台）。γ見本の4台はそのまま、間を1/12幅（約1m）の格子で埋める（TOKEN_SHEET §28）。
   STAGE_LIGHT_STYLE.floorExtraU.forEach((u, k) => fixtures.push({ id: `floor-kick-${String(k + 1).padStart(2, "0")}`, no: 181 + k, name: `転がし ${181 + k}`,
     mount: { type: "floor", u, v: STAGE_LIGHT_STYLE.floorExtraV }, kind: "moving", beamDeg: STAGE_LIGHT_STYLE.floorBeamDeg, fixtureType: "moving-wash", family: "moving", role: "転がし" }));
+  // 2026-10-07: ギター（左右に振られた音）用のビーム。下手（左の音）・上手（右の音）に3台ずつ（TOKEN_SHEET §36）。
+  for (const [side, tag] of [["shimote", "L"], ["kamite", "R"]]) STAGE_GUITAR_STYLE.mountV.forEach((v, k) => fixtures.push({
+    id: `guitar-beam-${tag}${k + 1}`, no: 191 + (tag === "L" ? 0 : 3) + k, name: `ギター ${tag === "L" ? "下手" : "上手"}${k + 1}`,
+    mount: { type: "side", side, v, h: STAGE_GUITAR_STYLE.mountH }, kind: "moving", beamDeg: STAGE_GUITAR_STYLE.beamDeg,
+    fixtureType: "moving-beam", family: "moving", role: "ギター", soundRole: "guitar", guitarSide: tag === "L" ? "left" : "right", guitarIndex: k }));
   for (let k = 0; k < 20; k++) fixtures.push({ id: `led-bar-${String(k + 1).padStart(2, "0")}`, no: 53 + k, name: `LEDバー ${k + 1}`,
     mount: { type: "truss", trussId: "bar-t-01", u: (k + 0.5) / 20 }, kind: "fixed", fixtureType: "led-bar", family: "led", beamDeg: 40, role: "吊り" });
   const p = STAGE_POINT_STYLE;
@@ -344,14 +354,15 @@ export function createStageDesign(rig = createDefaultRig()) {
       continue;
     }
     // 転がしは舞台奥から客席へ低く（2026-10-07・§28）。LEDは発光面と近傍のにじみだけで、照射面を持たない。
-    const bassFx = f.soundRole === "bass";
-    const aim = bassFx ? { u: m.u, v: STAGE_BASS_STYLE.aimV, hM: STAGE_BASS_STYLE.aimHeight }
+    const bassFx = f.soundRole === "bass", guitarFx = f.soundRole === "guitar", G = STAGE_GUITAR_STYLE;
+    const aim = guitarFx ? { u: m.side === "shimote" ? G.aimU : 1 - G.aimU, v: G.aimV[f.guitarIndex] ?? 0.5, hM: G.aimH }
+      : bassFx ? { u: m.u, v: STAGE_BASS_STYLE.aimV, hM: STAGE_BASS_STYLE.aimHeight }
       : m.type === "floor" ? { u: 0.5 - (m.u - 0.5) * STAGE_LIGHT_STYLE.floorCross, v: STAGE_LIGHT_STYLE.floorAimV, hM: STAGE_LIGHT_STYLE.floorAimHeight }
       : m.type === "side" ? { u: m.side === "shimote" ? 0.85 : 0.15, v: m.v, hM: 1.0 }
       : { u: m.u, v: point ? STAGE_POINT_STYLE.rows[f.pointRow].aimV : 0.5, hM: 0 };
-    lights[f.id] = { on: true, level: 100, color: fixtureColor(f), surface: m.type === "side" || point ? "floor" : "air", path: { kind: "still", a: aim },
+    lights[f.id] = { on: true, level: 100, color: fixtureColor(f), surface: (m.type === "side" && !guitarFx) || point ? "floor" : "air", path: { kind: "still", a: aim },
       speed: "normal", periodSec: null, offsetSec: 0, levelTo: null, beamDegTo: null, beamDeg: f.beamDeg,
-      beamEdgeSoftness: point ? STAGE_POINT_STYLE.softness : bassFx ? STAGE_BASS_STYLE.softness : m.type === "floor" ? STAGE_LIGHT_STYLE.floorSoftness : STAGE_LIGHT_STYLE.sideSoftness,
+      beamEdgeSoftness: point ? STAGE_POINT_STYLE.softness : guitarFx ? G.softness : bassFx ? STAGE_BASS_STYLE.softness : m.type === "floor" ? STAGE_LIGHT_STYLE.floorSoftness : STAGE_LIGHT_STYLE.sideSoftness,
       gobo: "none", goboSoft: 6, goboSpin: 0, goboAngle: 0, strobe: null, shutter: null, glare: 1, groupId: null };
   }
   return { format: "shosai.light-design", stage: { ...STAGE_SIZE }, rig,
@@ -372,6 +383,13 @@ export function fixtureLevelsAt(t, expData, rig, { spin01 = 0, pinColors = null 
     const strength = clamp(hit.level, 0, 1), remaining = 1 - age / window;
     const life = hit.tag === "kick" ? remaining ** 2.6 * strength
       : hit.tag === "snare" ? remaining ** 1.5 * strength : remaining ** 2 * (3 - 2 * remaining) * (0.5 + 0.5 * strength);
+    if (hit.tag === "guitar") {   // 左（x<0.5）の音は下手の3台、右は上手の3台（§36）
+      const side = hit.x < 0.5 ? "left" : "right", glife = (1 - age / STAGE_GUITAR_STYLE.windowSec) ** STAGE_GUITAR_STYLE.decayPower * strength;
+      if (age < STAGE_GUITAR_STYLE.windowSec) for (const f of rig.fixtures) if (f.soundRole === "guitar" && f.guitarSide === side) {
+        const value = levels.get(f.id); value.level = Math.max(value.level, glife * 100);
+      }
+      continue;
+    }
     const type = { kick: "floor", snare: "side", hat: "truss" }[hit.tag];
     const ids = hit.tag === "hat" ? new Set((hit.leds || []).filter((k) => Number.isInteger(k) && k >= 0 && k < 20).map((k) => `led-bar-${String(k + 1).padStart(2, "0")}`)) : null;
     for (const f of rig.fixtures) if (f.mount.type === type && !f.soundRole && (!ids || ids.has(f.id))) {
@@ -580,7 +598,7 @@ export function buildStageModel(design, rig, { overlay, plan, engine, body }) {
     f.bodyVertices = f.body ? bodyVertices(f.body) : [];
     f.beam = led ? null : beamOf(fixture, lights[f.id], f.body.lens, model.dims, engine,
       fixture.kind === "moving" ? f.body.size.headR : 0);
-    if (led || fixture.mount.type === "floor" || fixture.soundRole === "mirror-pin") f.pool = null;   // ピンは空中の筋だけ（床の光だまりは作らない）
+    if (led || fixture.mount.type === "floor" || fixture.soundRole === "mirror-pin" || fixture.soundRole === "guitar") f.pool = null;   // ギターも空中の筋だけ   // ピンは空中の筋だけ（床の光だまりは作らない）
     else {
       // γ v0.2.85 以降の poolOf は FIXTURE_BODY の同じ模型でレンズ先端を自分で求める。吊り点を渡し、レンズを二重に足さない。
       const pool = overlay.poolOf(fixture, lights[f.id], f, model.dims, engine);

@@ -2,6 +2,7 @@
 import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs";
 import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261007b";
 import { chorusSpans } from "./lib/mirror-ball-map.mjs?v=20261007b";
+import { detectSideLayer, addSideLayerEvents } from "./lib/guitar-side.mjs?v=20261007b";
 import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261007b";
 import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261007b";
 import { InkRenderer } from "./renderers/ink.mjs";
@@ -75,6 +76,7 @@ async function loadAudio(arrayBuffer, name) {
   const chans = []; for (let c = 0; c < buf.numberOfChannels; c++) chans.push(buf.getChannelData(c));
   state.mono = downmix(chans);
   state.stereo = buf.numberOfChannels >= 2 ? { left: chans[0], right: chans[1] } : null;
+  state.sideLayer = null;   // 左右に振られた音（ギター想定）の打点。音源ごとに1回だけ求める（§36）
   $("tDur").textContent = fmt(buf.duration);
   $("btnPlay").disabled = false;
   $("btnFocus").disabled = false;
@@ -99,6 +101,11 @@ function setFeatures(ft, { detectDrums = !ft.events?.some((e) => e.type === "not
   if (detectDrums && !ft.drums && state.mono && state.buffer && Math.abs(ft.source.durationSec - state.buffer.duration) <= 1.0) {
     setStatus("打楽器（キック／スネア／ハット）を判定中…");
     refineWithDrums(ft, state.mono, state.buffer.sampleRate, { stereo: state.stereo, sensitivity: currentSensitivity(), reinforce: currentReinforce() });
+  }
+  // 左右に振られた音（ギター想定）の打点を足す（2026-10-07・TOKEN_SHEET §36）。ステレオ音源があり、長さが合う時だけ。
+  if (state.stereo && state.buffer && Math.abs(ft.source.durationSec - state.buffer.duration) <= 1.0) {
+    state.sideLayer = state.sideLayer || detectSideLayer(state.stereo.left, state.stereo.right, state.buffer.sampleRate);
+    addSideLayerEvents(ft, state.sideLayer);
   }
   state.ft = ft;
   $("pianoNotice").hidden = !ft.events.some((e) => e.type === "note" && e.instrumentCandidate !== "bass");
@@ -132,7 +139,8 @@ $("reinforce").addEventListener("change", redetectDrums);
 
 // ---------- 割り振り ----------
 async function loadPreset(url) {
-  const res = await fetch(`../${url}`); const m = await res.json();
+  // 規則を足した版が古いキャッシュに隠れないように、版を付けて読む（2026-10-07）。
+  const res = await fetch(`../${url}?v=${VERSION}`); const m = await res.json();
   setMapping(m);
 }
 function setMapping(m) {
@@ -469,7 +477,7 @@ function updateStageGuide() {
     $("stageGuideTitle").textContent = "舞台（3D）";
     const spots = stage3d.rig.fixtures.filter((f) => f.soundRole === "point").length;
     const bassWashes = stage3d.rig.fixtures.filter((f) => f.soundRole === "bass").length;
-    $("stageGuideText").textContent = `転がし＝キック（白青のウォッシュを客席側へ）／SS＝スネア（橙・広め）／LEDバー20本＝ハイハット（金・バーだけ）／吊りスポット${spots}台・2列＝ピアノ・プラックなどのアタック（水緑・音程ごとに別の灯、低音は左・高音は右）。${bassWashes ? `床奥のウォッシュ${bassWashes}台＝ベース（藍紫・音程ごとに別の灯・音量の減り方で消える）。` : ""}${$("mirrorBallToggle").checked ? "ミラーボール＝サビ（音が一番厚い部分を4小節のまとまりで判定）の間だけ現れて回り、ピン2灯が拍（キック・スネア）で瞬いて反射の粒が空間を流れます。ピンの色はサビに入るたびと2小節ごとに変わります。" : ""}戻りは未対応。ドラッグで見回し。`;
+    $("stageGuideText").textContent = `転がし＝キック（白青のウォッシュを客席側へ）／SS＝スネア（橙・広め）／LEDバー20本＝ハイハット（金・バーだけ）／横のビーム6台＝左右に振られたギター（マゼンタ・左の音は下手、右の音は上手から）／吊りスポット${spots}台・2列＝ピアノ・プラックなどのアタック（水緑・音程ごとに別の灯、低音は左・高音は右）。${bassWashes ? `床奥のウォッシュ${bassWashes}台＝ベース（藍紫・音程ごとに別の灯・音量の減り方で消える）。` : ""}${$("mirrorBallToggle").checked ? "ミラーボール＝サビ（音が一番厚い部分を4小節のまとまりで判定）の間だけ現れて回り、ピン2灯が拍（キック・スネア）で瞬いて反射の粒が空間を流れます。ピンの色はサビに入るたびと2小節ごとに変わります。" : ""}戻りは未対応。ドラッグで見回し。`;
     return;
   }
   const point = !!state.intents?.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass");
@@ -579,7 +587,7 @@ function showProgress(p, text) { $("progress").hidden = false; $("progressBar").
 async function startLightDemo() {
   if (ui.sourceBusy) return;
   stop();
-  state.demo = true; state.buffer = null; state.mono = null; state.stereo = null;
+  state.demo = true; state.buffer = null; state.mono = null; state.stereo = null; state.sideLayer = null;
   state.ft = createDemoFeatures(); state.ftBase = null; state.intents = null;
   state.fileName = ""; state.offset = 0.06; state.lastT = -1;
   ink.reset(); rig.reset(); exp.data = null; stage3d.reset();

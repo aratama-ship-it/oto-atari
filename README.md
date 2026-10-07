@@ -18,7 +18,7 @@ oto-atari/
 ├── schema/        FEATURE_TIMELINE_SPEC.md / MAPPING_SPEC.md  … 中間形式の仕様（最重要）
 ├── analysis/      analyze.py（Python・librosa）/ merge_piano_notes.py（B曲候補のv2統合）/ merge_bass_notes.py（ベース候補と余韻のv2統合）/ test_analyze.py / README.md
 ├── web/
-│   ├── lib/       dsp.mjs（FFT等）/ analyze-core.mjs（JS版解析器）/ mapping-engine.mjs（規則→Intent）/ validate.mjs / mirror-ball-map.mjs（舞台のミラーボールの割り振り・純粋関数）
+│   ├── lib/       dsp.mjs（FFT等）/ analyze-core.mjs（JS版解析器）/ mapping-engine.mjs（規則→Intent）/ validate.mjs / mirror-ball-map.mjs（舞台のミラーボールの割り振り・純粋関数） / guitar-side.mjs（左右に振られた音＝ギター想定の打点をステレオの左右差から拾う）
 │   ├── renderers/ ink.mjs（塗料）/ rig.mjs（照明図）/ experience.mjs（舞台へ渡す打点・単音・ベースのまとめ。旧「体験」表示は 2026-10-07 に外した）/ stage3d.mjs（舞台3D）/ gamma-export.mjs（γ下書き）/ zones.mjs（zone→幾何）
 │   ├── vendor/gamma/ γの照明共有部品5本（本文無改変・複製元のコミットとSHA-256は PROVENANCE.json）
 │   └── index.html / app.js / style.css
