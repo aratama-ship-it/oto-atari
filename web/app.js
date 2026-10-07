@@ -1,7 +1,7 @@
 // app.js — 音源はAudioContext、無音デモだけはperformanceを時計にし、事前計算したIntentを引いて描く。
 import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs";
 import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261007b";
-import { loudSpans } from "./lib/mirror-ball-map.mjs?v=20261007b";
+import { chorusSpans } from "./lib/mirror-ball-map.mjs?v=20261007b";
 import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261007b";
 import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261007b";
 import { InkRenderer } from "./renderers/ink.mjs";
@@ -160,13 +160,13 @@ function recompile() {
   ink.reset(); rig.reset();
   ink.pointMode = rig.pointMode = state.intents.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass");
   exp.data = collectExperienceData(state.intents.discrete, state.ft.events, { beats: state.ft.tempo && state.ft.tempo.confidence >= 0.3 ? state.ft.tempo.beats : null, sections: state.ft.sections || [] });
-  // ミラーボールが出て回る区間（音の大きい場面・2026-10-07）。実音源は loudness 曲線から、無音デモは合成パターンの明示した区間。
+  // ミラーボールが出て回る区間（サビ＝4小節のまとまりで一番厚い部分・2026-10-07 夕・TOKEN_SHEET §35）。拍が取れない曲は音の大きい区間。無音デモは合成パターンの明示した区間。
   // 無音デモのベースは合成パターンを舞台へ直接渡す（note 候補を装わない）。実音源は解析JSONの bass note から。
   if (state.demo) {
     const bassRuleOn = state.mapping.rules.some((r) => r.id === "bass-floor-wash") && !state.disabledRules.has("bass-floor-wash");
     exp.data.bassSources = DEMO_BASS_NOTES; exp.data.bassNotes = bassRuleOn ? DEMO_BASS_NOTES : [];
   }
-  stage3d.setData(exp.data, { spans: state.demo ? DEMO_SUSTAIN_SPANS : loudSpans(state.ft), durationSec: state.ft.source.durationSec });
+  stage3d.setData(exp.data, { spans: state.demo ? DEMO_SUSTAIN_SPANS : chorusSpans(state.ft), durationSec: state.ft.source.durationSec });
   seedActivePoints(now()); state.lastT = now();
   updateStageGuide();
 }
@@ -469,7 +469,7 @@ function updateStageGuide() {
     $("stageGuideTitle").textContent = "舞台（3D）";
     const spots = stage3d.rig.fixtures.filter((f) => f.soundRole === "point").length;
     const bassWashes = stage3d.rig.fixtures.filter((f) => f.soundRole === "bass").length;
-    $("stageGuideText").textContent = `転がし＝キック（白青のウォッシュを客席側へ）／SS＝スネア（橙・広め）／LEDバー20本＝ハイハット（金・バーだけ）／吊りスポット${spots}台・2列＝ピアノ・プラックなどのアタック（水緑・音程ごとに別の灯、低音は左・高音は右）。${bassWashes ? `床奥のウォッシュ${bassWashes}台＝ベース（藍紫・音程ごとに別の灯・音量の減り方で消える）。` : ""}${$("mirrorBallToggle").checked ? "ミラーボール＝曲の中で音の大きい場面だけ現れて回り、ピン2灯が拍（キック・スネア）で瞬いて反射の粒が空間を流れます。ピンの色は場面に入るたびと2小節ごとに変わります。" : ""}戻りは未対応。ドラッグで見回し。`;
+    $("stageGuideText").textContent = `転がし＝キック（白青のウォッシュを客席側へ）／SS＝スネア（橙・広め）／LEDバー20本＝ハイハット（金・バーだけ）／吊りスポット${spots}台・2列＝ピアノ・プラックなどのアタック（水緑・音程ごとに別の灯、低音は左・高音は右）。${bassWashes ? `床奥のウォッシュ${bassWashes}台＝ベース（藍紫・音程ごとに別の灯・音量の減り方で消える）。` : ""}${$("mirrorBallToggle").checked ? "ミラーボール＝サビ（音が一番厚い部分を4小節のまとまりで判定）の間だけ現れて回り、ピン2灯が拍（キック・スネア）で瞬いて反射の粒が空間を流れます。ピンの色はサビに入るたびと2小節ごとに変わります。" : ""}戻りは未対応。ドラッグで見回し。`;
     return;
   }
   const point = !!state.intents?.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass");

@@ -24,6 +24,9 @@ export const MIRROR_MAP = Object.freeze({
   // ピンの色: 大きい区間に入るたび＋区間内は2小節ごと（拍が無ければ4秒ごと）に順送り。2灯は3つ離れた色。§30
   pinColors: Object.freeze(["#fff4dc", "#3d6bff", "#ff2e4d", "#a64dff", "#2ee6ff", "#ffb21f"]),
   pinColorBars: 2, pinColorFallbackSec: 4, pinColorOffset: 3,
+  // サビの判定（2026-10-07 夕・TOKEN_SHEET §35）: 4小節のまとまりごとに5つの手がかりの曲内順位を平均し、phraseMinScore 以上を出す。
+  phraseBars: 4, phraseCues: Object.freeze(["loudness", "band.mid", "band.high", "band.air", "flux"]), phraseMinScore: 0.65,
+  phraseMinBeatConfidence: 0.3, phraseMinDownbeats: 8,
   flashSec: 0.2,           // 拍の閃光の長さ
   flashPower: 2,           // 閃光の減衰の鋭さ（残り割合^power）
   beatStrength: Object.freeze({ down: 0.9, other: 0.6 }), // 拍フォールバック時の閃光の強さ（小節頭／その他）
@@ -214,6 +217,49 @@ export function loudSpans(ft, opts = {}) {
   for (const q of silences) spans = spans.flatMap((p) => q.end <= p.start || q.start >= p.end ? [p]
     : [...(q.start > p.start ? [{ start: p.start, end: q.start }] : []), ...(q.end < p.end ? [{ start: q.end, end: p.end }] : [])]);
   return duration > 0 ? spans.map((p) => ({ start: clamp(p.start, 0, duration), end: clamp(p.end, 0, duration) })).filter((p) => p.end > p.start) : spans;
+}
+
+/**
+ * サビの区間 [{start,end}]（秒・小節頭で始まり小節頭で終わる・昇順・重ならない）。純粋関数（2026-10-07 夕・§35）。
+ * 小節頭（beatInBar 0）を数え、区切りの手がかり（sectionChange・drop）を最寄りの小節頭へ寄せてそこから phraseBars 小節ずつ
+ * まとまりにする（2小節未満の端は前へ足す）。小節ごとに phraseCues の曲内順位（0〜1）を平均し、まとまりで平均した値が
+ * phraseMinScore 以上かつまとまりの平均 loudness が loudMinLevel 以上なら出す。続くまとまりはつなぐ。
+ * 拍が取れない曲（tempo.confidence が低い・小節頭が少ない）は loudSpans に戻す。
+ */
+export function chorusSpans(ft, opts = {}) {
+  const M = { ...MIRROR_MAP, ...opts };
+  const hop = finite(ft?.clock?.hopSec, 0), duration = finite(ft?.source?.durationSec, 0), tempo = ft?.tempo;
+  const downbeats = (tempo?.beats || []).filter((b) => b.beatInBar === 0).map((b) => finite(b.t, NaN)).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!(hop > 0) || !(duration > 0) || !(finite(tempo?.confidence, 0) >= M.phraseMinBeatConfidence) || downbeats.length < M.phraseMinDownbeats) return loudSpans(ft, opts);
+  const bars = downbeats.map((t, i) => ({ start: t, end: i + 1 < downbeats.length ? downbeats[i + 1] : duration })).filter((b) => b.end > b.start);
+  const meanOf = (curve, a, b) => {
+    const L = ft.curves?.[curve]; if (!Array.isArray(L) || !L.length) return 0;
+    const i0 = Math.max(0, Math.floor(a / hop)), i1 = Math.min(L.length, Math.floor(b / hop));
+    let s = 0; for (let i = i0; i < i1; i++) s += finite(L[i], 0);
+    return i1 > i0 ? s / (i1 - i0) : 0;
+  };
+  const cues = M.phraseCues.filter((c) => Array.isArray(ft.curves?.[c]) && ft.curves[c].length);
+  if (!cues.length) return loudSpans(ft, opts);
+  const raw = bars.map((b) => cues.map((c) => meanOf(c, b.start, b.end)));
+  const sortedByCue = cues.map((_, k) => raw.map((r) => r[k]).sort((a, b) => a - b));
+  const rankOf = (k, x) => { const v = sortedByCue[k]; let lo = 0, hi = v.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (v[mid] <= x) lo = mid + 1; else hi = mid; } return lo / v.length; };
+  bars.forEach((b, i) => { b.score = cues.reduce((s, _, k) => s + rankOf(k, raw[i][k]), 0) / cues.length; b.loud = meanOf("loudness", b.start, b.end); });
+  const nearestBar = (t) => { let best = 0; for (let i = 1; i < bars.length; i++) if (Math.abs(bars[i].start - t) < Math.abs(bars[best].start - t)) best = i; return best; };
+  const anchors = [...new Set([0, ...(ft.events || []).filter((e) => e.type === "sectionChange" || e.type === "drop").map((e) => nearestBar(finite(e.t, 0)))])].sort((a, b) => a - b);
+  const phrases = [];
+  anchors.forEach((a, k) => {
+    const end = k + 1 < anchors.length ? anchors[k + 1] : bars.length;
+    for (let i = a; i < end; i += M.phraseBars) {
+      const j = Math.min(end, i + M.phraseBars);
+      if (j - i < 2 && phrases.length && phrases[phrases.length - 1].b1 === i) phrases[phrases.length - 1].b1 = j;
+      else phrases.push({ b0: i, b1: j });
+    }
+  });
+  const chosen = phrases.filter((p) => {
+    const span = bars.slice(p.b0, p.b1), n = span.length;
+    return n > 0 && span.reduce((s, b) => s + b.score, 0) / n >= M.phraseMinScore && span.reduce((s, b) => s + b.loud, 0) / n >= M.loudMinLevel;
+  }).map((p) => ({ start: bars[p.b0].start, end: bars[p.b1 - 1].end }));
+  return mergeSpans(chosen, 1e-6).map((p) => ({ start: clamp(p.start, 0, duration), end: clamp(p.end, 0, duration) })).filter((p) => p.end > p.start);
 }
 
 /**
