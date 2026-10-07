@@ -245,9 +245,11 @@ export const STAGE_MIRROR_STYLE = Object.freeze({
 });
 // ベースの床ウォッシュ（2026-10-05・段階2・TOKEN_SHEET §27）。同音同灯・異音別灯、低音＝下手。
 // 左右に振られたギター（guitar-side.mjs）→ 舞台の横からビーム（2026-10-07・TOKEN_SHEET §36）。左の音＝下手、右の音＝上手。
+// 2026-10-07 夜: カッティングに合わせて細く・硬く・短く、打点ごとに3台を順送り（§38）。旧 6°・縁2・0.35秒・(1−x)^1.6・3台同時。
 export const STAGE_GUITAR_STYLE = Object.freeze({
-  color: "#ff3fb4", beamDeg: 6, softness: 2, mountV: Object.freeze([0.2, 0.5, 0.8]), mountH: 3.0,
-  aimU: 0.9, aimV: Object.freeze([0.05, 0.5, 0.95]), aimH: 5.5, windowSec: 0.35, decayPower: 1.6,
+  color: "#ff3fb4", beamDeg: 4, softness: 0, mountV: Object.freeze([0.2, 0.5, 0.8]), mountH: 3.0,
+  aimU: 0.9, aimV: Object.freeze([0.05, 0.5, 0.95]), aimH: 5.5, windowSec: 0.16, decayPower: 3, levelFloor: 0.55, chase: true,
+  leftBelow: 0.35, rightAbove: 0.65,   // 打点の x（0＝左・1＝右）がこの間なら中央＝両側から出す（§39）
 });
 export const STAGE_BASS_STYLE = Object.freeze({
   // v=0 が奥の壁（drawShell）。壁際の床から同じ u の壁を見上げる（グラウンドロウ）。
@@ -383,9 +385,11 @@ export function fixtureLevelsAt(t, expData, rig, { spin01 = 0, pinColors = null 
     const strength = clamp(hit.level, 0, 1), remaining = 1 - age / window;
     const life = hit.tag === "kick" ? remaining ** 2.6 * strength
       : hit.tag === "snare" ? remaining ** 1.5 * strength : remaining ** 2 * (3 - 2 * remaining) * (0.5 + 0.5 * strength);
-    if (hit.tag === "guitar") {   // 左（x<0.5）の音は下手の3台、右は上手の3台（§36）
-      const side = hit.x < 0.5 ? "left" : "right", glife = (1 - age / STAGE_GUITAR_STYLE.windowSec) ** STAGE_GUITAR_STYLE.decayPower * strength;
-      if (age < STAGE_GUITAR_STYLE.windowSec) for (const f of rig.fixtures) if (f.soundRole === "guitar" && f.guitarSide === side) {
+    if (hit.tag === "guitar") {   // 左の音は下手の3台、右は上手の3台、中央（x 0.35〜0.65）は両側（§36・§39）。順送りなら打点番号 n で1台ずつ（§38）
+      const G = STAGE_GUITAR_STYLE, side = hit.x < G.leftBelow ? "left" : hit.x > G.rightAbove ? "right" : "both";
+      const glife = (1 - age / G.windowSec) ** G.decayPower * (G.levelFloor + (1 - G.levelFloor) * strength);
+      const pick = G.chase && Number.isInteger(hit.n) ? hit.n % G.mountV.length : null;
+      if (age < G.windowSec) for (const f of rig.fixtures) if (f.soundRole === "guitar" && (side === "both" || f.guitarSide === side) && (pick === null || f.guitarIndex === pick)) {
         const value = levels.get(f.id); value.level = Math.max(value.level, glife * 100);
       }
       continue;

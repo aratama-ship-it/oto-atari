@@ -54,6 +54,7 @@
         <label class="num" style="width:100%"><span style="white-space:nowrap">判定の感度</span> <input type="range" id="sensitivity" min="1" max="5" step="0.5" value="3" style="flex:1;min-width:80px"> <span class="mono" id="sensVal">3</span></label>
         <span class="hint">上げるほど拾いやすく（拾いすぎも増える）。変えると判定をやり直します（約1秒）</span>
         <label class="check" style="width:100%"><input type="checkbox" id="reinforce" checked> キックの規則性（四つ打ち等）で拾い漏れを復元する（復元分は合図音が高く、時間軸では水色の縁）</label>
+        <label class="check" style="width:100%"><input type="checkbox" id="sideGuitar"> 左右差からギターを推定する（粗い。クラップやピアノの広がりも拾う。解析JSONにギターの打点があれば不要）</label>
       </div>
     </section>
 

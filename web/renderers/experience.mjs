@@ -4,7 +4,7 @@
 
 // 打点として舞台へ渡す印。guitar は左右に振られた音（guitar-side.mjs・TOKEN_SHEET §36）で、x（0＝左・1＝右）で側を決める。
 const DRUM_TAGS = ["kick", "snare", "hat", "guitar"];
-const DRUM_WINDOW = { kick: 0.22, snare: 0.32, hat: 0.42, guitar: 0.35 };
+const DRUM_WINDOW = { kick: 0.22, snare: 0.32, hat: 0.42, guitar: 0.16 };   // guitar は舞台の STAGE_GUITAR_STYLE.windowSec と同じ（§38）
 const SAME_HIT_SEC = 0.01;
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -82,13 +82,16 @@ export function collectExperienceData(discrete = [], events = [], { beats = null
       maxDur = Math.max(maxDur, dur);
       points.push({ t: d.t, dur, x: clamp(typeof d.x === "number" ? d.x : 0.5, 0, 1), level: clamp(d.level ?? 0.4, 0, 1), pitch: d.srcPitchMidi });
     } else if (DRUM_TAGS.includes(d.srcTag)) {
-      const key = d.srcTag === "guitar" ? `guitar:${typeof d.x === "number" && d.x < 0.5 ? "L" : "R"}` : d.srcTag;   // ギターは左右別々に数える
+      const key = d.srcTag === "guitar" ? `guitar:${typeof d.x === "number" ? (d.x < 0.35 ? "L" : d.x > 0.65 ? "R" : "C") : "C"}` : d.srcTag;   // ギターは左・中央・右で別々に数える
       const last = lastByTag[key];
       if (last !== undefined && d.t - last <= SAME_HIT_SEC) continue;
       lastByTag[key] = d.t;
       hits.push({ t: d.t, tag: d.srcTag, level: d.srcTag === "guitar" ? clamp(d.srcStrength ?? 0, 0, 1) : clamp(d.srcStrength ?? d.size ?? 0.5, 0.2, 1), x: typeof d.x === "number" ? d.x : 0.5 });
     }
   }
+  // ギターの打点番号（0,1,2,…・左右共通）。舞台の順送り（§38）が使う。中央の打点（x≈0.5）は両側に出るので側で分けない。
+  let nGuitar = 0;
+  for (const h of hits) if (h.tag === "guitar") h.n = nGuitar++;
   // ハットの LED 割当: 小節ごとの刻み N を先読みで決め、表／裏／3連／16分のスロットをバー番号へ写す
   const hatHits = hits.filter((h) => h.tag === "hat");
   const usable = beats && beats.length >= 2;
