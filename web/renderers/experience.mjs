@@ -3,8 +3,9 @@
 // 描画コードは v0.7.2（commit 44d20c9）の同名ファイルにある。ファイル名と collectExperienceData の名前は既存の参照を保つため据え置く。
 
 // 打点として舞台へ渡す印。guitar は左右に振られた音（guitar-side.mjs・TOKEN_SHEET §36）で、x（0＝左・1＝右）で側を決める。
-const DRUM_TAGS = ["kick", "snare", "hat", "guitar"];
-const DRUM_WINDOW = { kick: 0.22, snare: 0.32, hat: 0.42, guitar: 0.16 };   // guitar は舞台の STAGE_GUITAR_STYLE.windowSec と同じ（§38）
+// clap（手拍子・2026-10-07 夜・TOKEN_SHEET §40）はスネアと同じ扱い＝SS と球のピン。ブラウザのドラム判定ではなく、分離した音や書き出したトラックから焼き込む。
+const DRUM_TAGS = ["kick", "snare", "hat", "guitar", "clap"];
+const DRUM_WINDOW = { kick: 0.22, snare: 0.32, hat: 0.42, guitar: 0.16, clap: 0.32 };   // guitar は舞台の STAGE_GUITAR_STYLE.windowSec と同じ（§38）
 const SAME_HIT_SEC = 0.01;
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));

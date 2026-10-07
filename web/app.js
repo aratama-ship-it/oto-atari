@@ -533,7 +533,7 @@ function updateStageGuide() {
     $("stageGuideTitle").textContent = "舞台（3D）";
     const spots = stage3d.rig.fixtures.filter((f) => f.soundRole === "point").length;
     const bassWashes = stage3d.rig.fixtures.filter((f) => f.soundRole === "bass").length;
-    $("stageGuideText").textContent = `転がし＝キック（白青のウォッシュを客席側へ）／SS＝スネア（橙・広め）／LEDバー20本＝ハイハット（金・バーだけ）／横の細いビーム6台＝左右に振られたギター（マゼンタ・左の音は下手、右の音は上手から・一打ごとに順送り）／吊りスポット${spots}台・2列＝ピアノ・プラックなどのアタック（水緑・音程ごとに別の灯、低音は左・高音は右）。${bassWashes ? `床奥のウォッシュ${bassWashes}台＝ベース（藍紫・音程ごとに別の灯・音量の減り方で消える）。` : ""}${$("mirrorBallToggle").checked ? "ミラーボール＝音圧の高い小節のまとまり（小節の頭で出入り）の間だけ現れて回り、ピン2灯が拍（キック・スネア）で瞬いて反射の粒が空間を流れます。ピンの色は区間に入るたびと2小節ごとに変わります。" : ""}戻りは未対応。ドラッグで見回し。`;
+    $("stageGuideText").textContent = `転がし＝キック（白青のウォッシュを客席側へ）／SS＝スネア・クラップ（橙・広め）／LEDバー20本＝ハイハット（金・バーだけ）／横の細いビーム6台＝左右に振られたギター（マゼンタ・左の音は下手、右の音は上手から・一打ごとに順送り）／吊りスポット${spots}台・2列＝ピアノ・プラックなどのアタック（水緑・音程ごとに別の灯、低音は左・高音は右）。${bassWashes ? `床奥のウォッシュ${bassWashes}台＝ベース（藍紫・音程ごとに別の灯・音量の減り方で消える）。` : ""}${$("mirrorBallToggle").checked ? "ミラーボール＝音圧の高い小節のまとまり（小節の頭で出入り）の間だけ現れて回り、ピン2灯が拍（キック・スネア）で瞬いて反射の粒が空間を流れます。ピンの色は区間に入るたびと2小節ごとに変わります。" : ""}戻りは未対応。ドラッグで見回し。`;
     return;
   }
   const point = !!state.intents?.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass");

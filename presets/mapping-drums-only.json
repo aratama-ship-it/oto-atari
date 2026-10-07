@@ -112,6 +112,42 @@
       }
     },
     {
+      "id": "clap-splat",
+      "on": {
+        "event": "onset",
+        "tags": [
+          "clap"
+        ],
+        "minConfidence": 0.4
+      },
+      "emit": {
+        "intent": "splat",
+        "zone": "high",
+        "color": "@palette.mid",
+        "size": {
+          "from": "strength",
+          "range": [
+            0.3,
+            0.7
+          ]
+        },
+        "weight": 0.35,
+        "decaySec": 0.9,
+        "spread": 0.7,
+        "x": {
+          "from": "pan",
+          "domain": [
+            -1,
+            1
+          ],
+          "range": [
+            0.08,
+            0.92
+          ]
+        }
+      }
+    },
+    {
       "id": "hat-splat",
       "on": {
         "event": "onset",

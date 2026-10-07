@@ -156,7 +156,7 @@ export function pinFlashAt(t, data, opts = {}) {
   const out = [0, 0];
   if (!data) return out;
   const hits = data.hits || [];
-  const hasDrums = hits.some((h) => h.tag === "kick" || h.tag === "snare");
+  const hasDrums = hits.some((h) => h.tag === "kick" || h.tag === "snare" || h.tag === "clap");
   const life = (age, strength) => {
     if (!(age >= 0 && age < M.flashSec)) return 0;
     return (1 - age / M.flashSec) ** M.flashPower * clamp(strength, 0, 1);
@@ -164,7 +164,7 @@ export function pinFlashAt(t, data, opts = {}) {
   if (hasDrums) {
     for (let i = lowerBound(hits, t - M.flashSec); i < hits.length; i++) {
       const h = hits[i]; if (h.t > t) break;
-      const slot = h.tag === "kick" ? 0 : h.tag === "snare" ? 1 : -1;
+      const slot = h.tag === "kick" ? 0 : h.tag === "snare" || h.tag === "clap" ? 1 : -1;   // clap もスネア側のピン（§40）
       if (slot < 0) continue;
       out[slot] = Math.max(out[slot], life(t - h.t, finite(h.level, 0.5)));
     }

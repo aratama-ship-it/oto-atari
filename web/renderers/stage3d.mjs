@@ -384,7 +384,7 @@ export function fixtureLevelsAt(t, expData, rig, { spin01 = 0, pinColors = null 
     if (!window || age < 0 || age >= window) continue;
     const strength = clamp(hit.level, 0, 1), remaining = 1 - age / window;
     const life = hit.tag === "kick" ? remaining ** 2.6 * strength
-      : hit.tag === "snare" ? remaining ** 1.5 * strength : remaining ** 2 * (3 - 2 * remaining) * (0.5 + 0.5 * strength);
+      : hit.tag === "snare" || hit.tag === "clap" ? remaining ** 1.5 * strength : remaining ** 2 * (3 - 2 * remaining) * (0.5 + 0.5 * strength);
     if (hit.tag === "guitar") {   // 左の音は下手の3台、右は上手の3台、中央（x 0.35〜0.65）は両側（§36・§39）。順送りなら打点番号 n で1台ずつ（§38）
       const G = STAGE_GUITAR_STYLE, side = hit.x < G.leftBelow ? "left" : hit.x > G.rightAbove ? "right" : "both";
       const glife = (1 - age / G.windowSec) ** G.decayPower * (G.levelFloor + (1 - G.levelFloor) * strength);
@@ -394,7 +394,7 @@ export function fixtureLevelsAt(t, expData, rig, { spin01 = 0, pinColors = null 
       }
       continue;
     }
-    const type = { kick: "floor", snare: "side", hat: "truss" }[hit.tag];
+    const type = { kick: "floor", snare: "side", clap: "side", hat: "truss" }[hit.tag];   // clap はスネアと同じ SS（§40）
     const ids = hit.tag === "hat" ? new Set((hit.leds || []).filter((k) => Number.isInteger(k) && k >= 0 && k < 20).map((k) => `led-bar-${String(k + 1).padStart(2, "0")}`)) : null;
     for (const f of rig.fixtures) if (f.mount.type === type && !f.soundRole && (!ids || ids.has(f.id))) {
       const value = levels.get(f.id); value.level = Math.max(value.level, life * 100);
