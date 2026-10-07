@@ -47,6 +47,7 @@ function ctx() {
     // OS都合の中断（バックグラウンド化・Bluetooth切替等）で suspended になったまま気付かないと
     // 「再生中の表示なのに音が出ない」状態になる。検知して復帰を試み、UIの表示とずれないようにする。
     ac.addEventListener("statechange", () => {
+      diagNote("audioCtx statechange → " + ac.state);
       if (ac.state === "suspended" && state.playing && !state.demo) {
         ac.resume().catch(() => {});
         setTimeout(() => { if (ac.state === "suspended" && state.playing && !state.demo) { setStatus("音声が中断されました。もう一度 ▶ を押してください"); stop(); } }, 800);
@@ -231,12 +232,20 @@ async function play() {
   }
   const buffer = state.buffer, ac = ctx();
   if (ac.state !== "running") { try { await ac.resume(); } catch (_) {} }
-  if (ac.state !== "running") { setStatus("音声を開始できません（ブラウザにより一時停止されています）。もう一度 ▶ を押してください"); return; }
+  if (ac.state !== "running") { armAudioRecovery(`play: state=${ac.state}`); return; }
   if (state.playing || state.demo || state.buffer !== buffer) return; // resume待ちの間の読込・デモ復帰・二重再生を除く
   const src = ac.createBufferSource(); src.buffer = state.buffer; src.connect(ac.destination);
   src.onended = () => { if (state.source === src && state.playing && now() >= buffer.duration - 0.05) { stop(); state.offset = 0; } };
   state.startedAt = ac.currentTime; src.start(0, state.offset); state.source = src; state.playing = true; resetAudition();
   updatePlayButton();
+  // 2026-10-07 夜: Safari で「再生中の表示なのに音が出ない」対策。開始から0.7秒たっても音源時計が進まない／running でないなら、次のタップで立て直す。
+  const startedCtxTime = ac.currentTime;
+  setTimeout(() => {
+    if (state.source !== src || !state.playing) return;
+    const advanced = ac.currentTime - startedCtxTime;
+    if (ac.state !== "running" || advanced < 0.05) armAudioRecovery(`after start: state=${ac.state} advanced=${advanced.toFixed(3)}s`);
+    else { audio.blocked = false; diagNote(`audio ok: advanced ${advanced.toFixed(3)}s`); }
+  }, 700);
   // 再生開始位置より前の Intent は捨てる
   state.lastT = state.offset;
 }
@@ -261,6 +270,50 @@ $("btnNextEvent").addEventListener("click", () => {
   if (next.intent !== "point") { ink.receive(next, next.t); rig.receive(next, next.t); }
   setStatus(`次の反応 ${fmt(next.t)} — ${next.intent}`);
 });
+
+// ---------- 診断（?diag=1 で画面左下に表示）と、音が出ない時の立て直し（2026-10-07 夜） ----------
+const DIAG = new URLSearchParams(location.search).has("diag");
+const diag = { log: [], lastError: "", el: null };
+function diagNote(text) { diag.log.push(`${(performance.now() / 1000).toFixed(1)}s ${text}`); if (diag.log.length > 8) diag.log.shift(); }
+window.addEventListener("error", (e) => { diag.lastError = String(e.message || e.error || e); diagNote("error: " + diag.lastError); });
+window.addEventListener("unhandledrejection", (e) => { diag.lastError = String(e.reason?.message || e.reason); diagNote("rejection: " + diag.lastError); });
+if (DIAG) {
+  diag.el = document.createElement("pre"); diag.el.id = "diag";
+  diag.el.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:9999;margin:0;padding:8px 10px;background:rgba(0,0,0,.85);color:#9fe;font:12px/1.4 ui-monospace,Menlo,monospace;max-width:92vw;white-space:pre-wrap;pointer-events:none;border:1px solid #2c2c30;border-radius:6px";
+  document.body.appendChild(diag.el);
+}
+function updateDiag() {
+  if (!diag.el) return;
+  const ac = state.audioCtx, ua = navigator.userAgent;
+  diag.el.textContent = [
+    `v${VERSION}  ${/Safari/.test(ua) && !/Chrome|Chromium|CriOS/.test(ua) ? "Safari" : "other browser"}  ${ua.slice(0, 60)}`,
+    `audioCtx: ${ac ? ac.state : "(まだ作られていない)"}  currentTime=${ac ? ac.currentTime.toFixed(2) : "-"}  sampleRate=${ac ? ac.sampleRate : "-"}`,
+    `playing=${state.playing} demo=${state.demo} offset=${state.offset.toFixed(2)} now=${now().toFixed(2)} source=${!!state.source} buffer=${state.buffer ? state.buffer.duration.toFixed(1) + "s" : "-"} file=${state.fileName || "-"}`,
+    `blocked=${audio.blocked}  status: ${$("topStatus").textContent}`,
+    `lastError: ${diag.lastError || "-"}`,
+    ...diag.log,
+  ].join("\n");
+}
+const audio = { blocked: false, armed: false };
+/** 音源時計が進まない時（Safari の自動再生制限・出力先の切替など）、次のタップ／キーで AudioContext を起こし、同じ位置から再生し直す。 */
+function armAudioRecovery(reason) {
+  audio.blocked = true;
+  diagNote("blocked: " + reason);
+  setStatus("音が出ていません。画面をどこか一度タップ（クリック）すると、その位置から再開します");
+  if (audio.armed) return;
+  audio.armed = true;
+  const once = () => {
+    for (const ev of ["pointerdown", "keydown", "touchend"]) document.removeEventListener(ev, once, true);
+    audio.armed = false;
+    const ac = state.audioCtx; if (!ac) return;
+    // ユーザー操作と同じ呼び出しの中で resume と無音1サンプルの再生（Safari の解錠）
+    try { ac.resume().catch(() => {}); const s = ac.createBufferSource(); s.buffer = ac.createBuffer(1, 1, ac.sampleRate); s.connect(ac.destination); s.start(0); } catch (_) {}
+    diagNote("gesture → resume, state=" + ac.state);
+    const at = now(); stop(); state.offset = at;
+    play().then(() => { if (state.playing && ac.state === "running") setStatus("再開しました"); });
+  };
+  for (const ev of ["pointerdown", "keydown", "touchend"]) document.addEventListener(ev, once, true);
+}
 
 // ---------- 描画ループ ----------
 const meterIds = ["sub", "bass", "lowmid", "mid", "high", "air", "loud"];
@@ -304,6 +357,7 @@ function frame() {
   }
   $("tNow").textContent = fmt(t - latency);
   if (state.playing) drawTimeline();
+  updateDiag();
 }
 requestAnimationFrame(frame);
 
