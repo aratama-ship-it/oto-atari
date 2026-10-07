@@ -7,21 +7,22 @@ import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=2
 import { InkRenderer } from "./renderers/ink.mjs";
 import { RigRenderer } from "./renderers/rig.mjs";
 import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261005b";
-import { ExperienceRenderer } from "./renderers/experience.mjs?v=20261005b";
+import { collectExperienceData } from "./renderers/experience.mjs?v=20261005b";
 import { buildGammaDraft, detectTemplate } from "./renderers/gamma-export.mjs";
 
 const VERSION = "0.7.2";
 const $ = (id) => document.getElementById(id);
 const state = {
   audioCtx: null, buffer: null, source: null, startedAt: 0, offset: 0, playing: false,
-  ft: null, mapping: null, intents: null, disabledRules: new Set(), lastT: -1, view: "ink",
+  ft: null, mapping: null, intents: null, disabledRules: new Set(), lastT: -1, view: "stage3d",
   gammaTemplate: null, fileName: "", focus: false, demo: false,
 };
 $("version").textContent = `v${VERSION}`;
 window.otoAtari = { state }; // 検証用（ブラウザ自動操作から状態を読む。書き換え用ではない）
 const ink = new InkRenderer($("inkCanvas"));
 const rig = new RigRenderer($("rigCanvas"));
-const exp = new ExperienceRenderer($("expCanvas"));
+// 舞台へ渡す打点・単音・ベースのまとめ（2026-10-07 に「体験」表示を外し、データだけ残した。TOKEN_SHEET §32）。
+const exp = { data: null };
 // ミラーボールの初期状態: 既定オン。`?mirror=off` で切って開ける（旧来の舞台と見比べる・従来の検査用）。
 if (new URLSearchParams(location.search).get("mirror") === "off") $("mirrorBallToggle").checked = false;
 const stage3d = new Stage3dRenderer($("stage3dCanvas"), { mirrorBall: $("mirrorBallToggle").checked, bassSources: DEMO_BASS_NOTES });
@@ -30,8 +31,6 @@ const compactMedia = matchMedia("(max-width: 1199px), (pointer: coarse)");
 const ui = { settingsOpen: false, panel: "panelSource", sourceBusy: false };
 $("stageViewpoint").addEventListener("change", (e) => { stage3d.setViewpoint(e.target.value); });
 $("mirrorBallToggle").addEventListener("change", (e) => { stage3d.setMirrorBall(e.target.checked); updateStageGuide(); });
-$("reduceMotion").addEventListener("change", (e) => { exp.reduce = e.target.checked; });
-$("hatStyle").addEventListener("change", (e) => { exp.hatStyle = e.target.value; updateStageGuide(); });
 
 // ---------- 音源 ----------
 function ctx() {
@@ -67,7 +66,7 @@ async function loadAudio(arrayBuffer, name) {
   $("btnPlay").disabled = true; $("btnFocus").disabled = true; $("seek").disabled = true;
   $("seek").value = 0; $("tNow").textContent = $("tDur").textContent = fmt(0);
   $("emptyState").hidden = false;
-  state.ft = null; state.ftBase = null; state.intents = null; ink.reset(); rig.reset(); exp.reset(); stage3d.reset();
+  state.ft = null; state.ftBase = null; state.intents = null; ink.reset(); rig.reset(); exp.data = null; stage3d.reset();
   ink.pointMode = false;
   $("facts").hidden = true; $("sensRow").hidden = true; $("pianoNotice").hidden = true;
   $("btnExportFeatures").disabled = true; $("btnExportIntents").disabled = true; $("btnExportGamma").disabled = true;
@@ -160,7 +159,7 @@ function recompile() {
   ink.setSurface(state.mapping.palettes[state.mapping.startPalette]?.surface);
   ink.reset(); rig.reset();
   ink.pointMode = rig.pointMode = state.intents.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass");
-  exp.setData(state.intents.discrete, state.ft.events, { beats: state.ft.tempo && state.ft.tempo.confidence >= 0.3 ? state.ft.tempo.beats : null, sections: state.ft.sections || [] });
+  exp.data = collectExperienceData(state.intents.discrete, state.ft.events, { beats: state.ft.tempo && state.ft.tempo.confidence >= 0.3 ? state.ft.tempo.beats : null, sections: state.ft.sections || [] });
   // ミラーボールが出て回る区間（音の大きい場面・2026-10-07）。実音源は loudness 曲線から、無音デモは合成パターンの明示した区間。
   // 無音デモのベースは合成パターンを舞台へ直接渡す（note 候補を装わない）。実音源は解析JSONの bass note から。
   if (state.demo) {
@@ -284,7 +283,6 @@ function frame() {
   }
   if ($("preview").hidden) { /* 設定中も音源時計と時間軸は維持し、隠れたcanvasは描かない。 */ }
   else if (state.view === "stage3d") stage3d.frame(t, { playing: state.playing });
-  else if (state.view === "exp") exp.frame(t, { playing: state.playing });
   else {
     if (state.view !== "rig") ink.frame(t, cont, surface);
     if (state.view !== "ink") rig.frame(t, cont);
@@ -458,7 +456,7 @@ document.querySelectorAll(".views .view").forEach((b) => b.addEventListener("cli
 function setView(v) {
   state.view = v;
   document.querySelectorAll(".views .view").forEach((b) => { const on = b.dataset.view === v; b.classList.toggle("active", on); b.setAttribute("aria-selected", on); });
-  $("inkCanvas").hidden = v === "rig" || v === "exp" || v === "stage3d"; $("rigCanvas").hidden = v === "ink" || v === "exp" || v === "stage3d"; $("expCanvas").hidden = v !== "exp"; $("stage").classList.toggle("both", v === "both");
+  $("inkCanvas").hidden = v === "rig" || v === "stage3d"; $("rigCanvas").hidden = v === "ink" || v === "stage3d"; $("stage").classList.toggle("both", v === "both");
   $("stage3dCanvas").hidden = v !== "stage3d";
   $("stageViewpointControl").hidden = v !== "stage3d";
   $("stage").classList.toggle("stage3d", v === "stage3d");
@@ -475,13 +473,6 @@ function updateStageGuide() {
     return;
   }
   const point = !!state.intents?.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass");
-  if (state.view === "exp") {
-    $("stageGuideTitle").textContent = "体験表示";
-    $("stageGuideText").textContent = point
-      ? "左＝低音／右＝高音。にじみの大きさと明るさは推定強度（モデル強度70％＋原曲全体の相対音量30％）。候補の推定であり、各音の実音量や元MIDIのベロシティではありません。映像が遅れて見えるときは「遅れ補正」を正の値に。"
-      : `キック＝中央の白い閃光／スネア＝橙の稲妻／ハット＝${$("hatStyle").value === "ring" ? "中央の金色の瞬き" : "上辺のLEDバー20本（表と裏で担当バーが変わり、3連・16分でさらにずれる。小節ごとに自動判定）"}／無音＝暗転・戻り＝琥珀の空気光。打点は混合音からの推定です。映像が遅れて見えるときは「遅れ補正」を正の値に。`;
-    return;
-  }
   $("stageGuideTitle").textContent = point ? "ピアノ単音の光" : (state.view === "rig" ? "照明図" : "インクの出力");
   $("stageGuideText").textContent = point
     ? (state.view === "rig" ? "左＝低音／右＝高音。光はモデル強度70％＋原曲全体の相対音量30％。実灯体には未割当です。" : "左＝低音／右＝高音。光の大きさと明るさはモデル強度70％＋原曲全体の相対音量30％。各音の実音量や元MIDIのベロシティではありません。")
@@ -495,7 +486,7 @@ function setFocus(on) {
   $("btnFocus").textContent = on ? "編集へ戻る" : "出力を見る";
   $("btnFocus").setAttribute("aria-pressed", String(on));
   $("stageGuide").hidden = !on;
-  if (on) setView("exp");
+  if (on) setView("stage3d");
   updateStageGuide();
   syncResponsiveUI();
   requestAnimationFrame(drawTimeline);
@@ -591,7 +582,7 @@ async function startLightDemo() {
   state.demo = true; state.buffer = null; state.mono = null; state.stereo = null;
   state.ft = createDemoFeatures(); state.ftBase = null; state.intents = null;
   state.fileName = ""; state.offset = 0.06; state.lastT = -1;
-  ink.reset(); rig.reset(); exp.reset(); stage3d.reset();
+  ink.reset(); rig.reset(); exp.data = null; stage3d.reset();
   ink.pointMode = rig.pointMode = false;
   for (const id of ["facts", "sensRow", "pianoNotice", "emptyState"]) $(id).hidden = true;
   for (const id of ["btnExportFeatures", "btnExportIntents", "btnExportGamma", "btnNextEvent"]) $(id).disabled = true;
@@ -601,7 +592,7 @@ async function startLightDemo() {
   $("tDur").textContent = fmt(duration()); $("tempoBox").textContent = "120 BPM";
   $("presetSelect").value = "presets/mapping-drums-notes.json";
   setSourceBusy(true);
-  setView("exp"); showLoadedPreview();
+  setView("stage3d"); showLoadedPreview();
   setStatus("光のデモ · 無音 — 「音楽も再生」でサンプル曲が流れます");
   try {
     await loadPreset($("presetSelect").value);

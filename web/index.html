@@ -12,9 +12,8 @@
   <div class="brand"><span class="name">音アタリ</span><span class="ver" id="version">v0.7.1</span></div>
   <div class="top-status" id="topStatus" role="status">音源を読み込んでください</div>
   <nav class="views" role="tablist" aria-label="表示">
-    <button class="view" data-view="exp" role="tab" aria-selected="false">体験</button>
-    <button class="view" data-view="stage3d" role="tab" aria-selected="false">舞台</button>
-    <button class="view active" data-view="ink" role="tab" aria-selected="true">インク</button>
+    <button class="view active" data-view="stage3d" role="tab" aria-selected="true">舞台</button>
+    <button class="view" data-view="ink" role="tab" aria-selected="false">インク</button>
     <button class="view" data-view="rig" role="tab" aria-selected="false">照明図</button>
     <button class="view" data-view="both" role="tab" aria-selected="false">両方</button>
   </nav>
@@ -80,8 +79,6 @@
       <h2>3. 出力</h2>
       <div class="row wrap">
         <label class="check"><input type="checkbox" id="suppressStrobe"> ストロボを抑える（脈に置き換え）</label>
-        <label class="check"><input type="checkbox" id="reduceMotion"> 動きを抑える（体験表示の粒子・拡散を止め、閃光を弱める）</label>
-        <label class="num">ハット表示 <select id="hatStyle" aria-label="ハイハットの表示"><option value="bars">LEDバー列（上辺・表裏で担当が変わる）</option><option value="ring">金色の瞬き（中央）</option></select></label>
         <label class="check"><input type="checkbox" id="audition"> 合図音（splat の位置でクリック音。耳で検証）</label>
         <div class="latency-control"><label for="latencyMs">遅れ補正（ms）</label><div class="number-stepper"><button id="btnLatencyMinus" type="button" aria-label="遅れ補正を5ミリ秒減らす">−</button><input type="number" id="latencyMs" value="0" step="5" min="-500" max="500" inputmode="decimal"><button id="btnLatencyPlus" type="button" aria-label="遅れ補正を5ミリ秒増やす">＋</button></div></div>
       </div>
@@ -111,10 +108,9 @@
       <span class="hint">ドラッグで見回す</span>
     </div>
     <section class="stage" id="stage">
-    <canvas id="inkCanvas" class="surface" aria-label="インク描画"></canvas>
+    <canvas id="inkCanvas" class="surface" aria-label="インク描画" hidden></canvas>
     <canvas id="rigCanvas" class="surface" aria-label="照明図" hidden></canvas>
-    <canvas id="expCanvas" class="surface" aria-label="体験表示" hidden></canvas>
-    <canvas id="stage3dCanvas" class="surface" aria-label="舞台（3D）" hidden></canvas>
+    <canvas id="stage3dCanvas" class="surface" aria-label="舞台（3D）"></canvas>
     <div class="empty-state" id="emptyState"><strong>音の反応を、光で見る</strong><span>音源を読み込むと、ここに出力が表示されます。</span><button type="button" id="btnChooseSource">音源を選ぶ</button></div>
     <details class="stage-guide" id="stageGuide" open hidden>
       <summary id="stageGuideTitle">出力プレビュー</summary>

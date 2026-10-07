@@ -19,7 +19,7 @@ oto-atari/
 ├── analysis/      analyze.py（Python・librosa）/ merge_piano_notes.py（B曲候補のv2統合）/ merge_bass_notes.py（ベース候補と余韻のv2統合）/ test_analyze.py / README.md
 ├── web/
 │   ├── lib/       dsp.mjs（FFT等）/ analyze-core.mjs（JS版解析器）/ mapping-engine.mjs（規則→Intent）/ validate.mjs / mirror-ball-map.mjs（舞台のミラーボールの割り振り・純粋関数）
-│   ├── renderers/ ink.mjs（塗料）/ rig.mjs（照明図）/ experience.mjs（体験表示・時刻決定型）/ stage3d.mjs（舞台3D）/ gamma-export.mjs（γ下書き）/ zones.mjs（zone→幾何）
+│   ├── renderers/ ink.mjs（塗料）/ rig.mjs（照明図）/ experience.mjs（舞台へ渡す打点・単音・ベースのまとめ。旧「体験」表示は 2026-10-07 に外した）/ stage3d.mjs（舞台3D）/ gamma-export.mjs（γ下書き）/ zones.mjs（zone→幾何）
 │   ├── vendor/gamma/ γの照明共有部品5本（本文無改変・複製元のコミットとSHA-256は PROVENANCE.json）
 │   └── index.html / app.js / style.css
 ├── presets/       既存のv1割り振り / mapping-piano-notes.json（v2）
@@ -35,9 +35,9 @@ cd "/Users/arata/Library/Mobile Documents/com~apple~CloudDocs/claude code files/
 python3 -m http.server 8973 --bind 127.0.0.1     # → http://127.0.0.1:8973/web/
 ```
 
-1. 開くと、音源不要の「光のデモ」が無音で動く。「音楽も再生」を押すと同梱サンプル曲が流れる。OSの低モーション設定がある場合はデモも停止状態から始まる。
+1. 開くと「舞台」表示で、音源不要の「光のデモ」が無音で動く。「音楽も再生」を押すと同梱サンプル曲が流れる。OSの低モーション設定がある場合はデモも停止状態から始まる。
 2. スマホは右上の「設定」で音源や割り振りを選ぶ。タブレット・PCは映像と設定を並べて表示。手元の曲は「音源ファイル…」から選び、解析JSONが無ければブラウザ内で解析（JS版）。
-3. ▶／❚❚ で再生・停止。時間軸は指でも動かせる。「体験／舞台／インク／照明図／両方」を切り替え、割り振りの規則を変更できる。
+3. ▶／❚❚ で再生・停止。時間軸は指でも動かせる。「舞台／インク／照明図／両方」を切り替え、割り振りの規則を変更できる。
 4. 読み込んだ曲の特徴JSON・意図JSON・γ下書きを書き出せる（γは雛形JSONが必要）。無音デモは合成パターンで、音源解析結果ではないため書き出しは無効。
 
 無音デモの「ドラム＋単音」は、転がし＝キック、SS＝スネア、LEDバー＝ハット、吊りスポット＝単音アタック、舞台奥の床のウォッシュ＝ベース（合成のベース進行・音高ごとに別の灯）を試せる。実音源で単音を表示するときは、対応するnote候補のある特徴JSONとピアノ単音／ドラム＋単音の規則を使う。実音源でベースを表示するときは、`analysis/merge_bass_notes.py` でベース候補（`instrumentCandidate: "bass"`）を入れた特徴JSONを読み込む（舞台表示で床奥のウォッシュが音高ごとに点き、音量の減り方で消える）。
