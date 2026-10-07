@@ -218,6 +218,9 @@ export const STAGE_LIGHT_STYLE = Object.freeze({
   floorCross: 0.6,
   // 逆光の目くらまし: 光が見ている人の方を向くほど、レンズに強いにじみを足す（γの部品には無い・音アタリ側の描画）。§29。
   floorGlare: Object.freeze({ strength: 0.9, power: 4, radiusM: 0.9 }),
+  // 客席を向いた転がしは板の筋をやめて丸いにじみで描く（光軸と視線の角度 onDeg 以下で丸だけ、offDeg 以上で板だけ）。§33。
+  // radiusM／strength＝光源のまわりのにじみ（光源の奥行きでの半径m／明るさ）、wideRadiusM／wideStrength＝その外の広く薄い霞の光（目くらまし）。
+  floorHalo: Object.freeze({ onDeg: 20, offDeg: 40, radiusM: 2.5, strength: 0.6, wideRadiusM: 10, wideStrength: 0.07 }),
   sideLowBeamDeg: 36, sideHighBeamDeg: 56, sideSoftness: 8,
 });
 export const STAGE_POINT_STYLE = Object.freeze({
@@ -510,6 +513,20 @@ export function beamFacingView(beam, view) {
   return { ...beam, eb: { x: b.x * scale, y: b.y * scale, z: b.z * scale } };
 }
 
+/** 転がしの光をどれだけ「丸いにじみ」で描くか（0＝従来の板、1＝丸だけ）。§33。
+ * γの筋は光軸と視線の両方に直交する1枚の板なので、ほぼ正面から見ると板が縦に立って柱に見える（2026-10-07 本人指摘）。
+ * 光軸と視線の角度が onDeg 以下で1、offDeg 以上で0、間は smoothstep。視点だけで決まり、時刻には依らない。 */
+export function floorHaloWeight(beam, view, { onDeg = STAGE_LIGHT_STYLE.floorHalo.onDeg, offDeg = STAGE_LIGHT_STYLE.floorHalo.offDeg } = {}) {
+  const a = { x: beam.to.x - beam.from.x, y: beam.to.y - beam.from.y, z: beam.to.z - beam.from.z };
+  const e = { x: view.x - beam.from.x, y: view.z + D / 2 - beam.from.y, z: view.y - beam.from.z };
+  const la = Math.hypot(a.x, a.y, a.z), le = Math.hypot(e.x, e.y, e.z);
+  if (!(la > 0 && le > 0)) return 0;
+  const cos = Math.min(1, Math.max(-1, (a.x * e.x + a.y * e.y + a.z * e.z) / (la * le)));
+  const deg = Math.acos(cos) * 180 / Math.PI;
+  const s = Math.min(1, Math.max(0, (offDeg - deg) / (offDeg - onDeg)));
+  return s * s * (3 - 2 * s);
+}
+
 /** レンズ面から始まる円錐台の断面。仮想頂点はγの塗り専用で、光源の正本は動かさない。 */
 export function beamApertureGeometry(beam) {
   const r = beam.sourceRadiusM;
@@ -612,6 +629,7 @@ export class Stage3dRenderer {
     this.model = buildStageModel(this.design, rig, this.modelParts);
     this.pools = new Map(this.model.fixtures.filter((f) => f.pool).map((f) => [f.id, f.pool]));
     this.beams = new Map(this.model.fixtures.filter((f) => f.beam).map((f) => [f.id, f.beam]));
+    this.floorKickIds = new Set(rig.fixtures.filter((f) => f.mount.type === "floor" && !f.soundRole).map((f) => f.id));   // §33 の丸いにじみの対象
     // ミラーボール: 球の位置・半径は γ の読取モデル（overlay.build の mirrorBall 枠）から。ピンの光源は模型のレンズ先端。
     const ball = this.model.fixtures.find((f) => f.mirrorBall);
     const pins = (rig.mirror?.pinIds || []).map((id) => this.model.fixtures.find((f) => f.id === id));
@@ -711,6 +729,28 @@ export class Stage3dRenderer {
     const c = mirrorBallCentreOf(this.rig);
     return c ? toCamera(toWorld(c.u, c.v, W, D, c.hM)).z : null;
   }
+  /** 客席を向いた転がしの丸いにじみ（§33）。円錐の中から光源を見た時の霞の明るさを、光源中心の放射グラデーション2枚
+   * （光源のまわりのにじみ＋外へ広く薄く伸びる霞の光）で描く。画面一様のベールは使わない（一様な灰色に見えた）。時刻 t の光量だけで決まる。 */
+  paintFloorHalo(halos) {
+    const h = STAGE_LIGHT_STYLE.floorHalo, ctx = this.ctx, P = cueLightProjector();
+    if (!halos.length) return;
+    const disc = (at, r, a, rgb, stops) => {
+      if (!(a > 0 && r > 0)) return;
+      const grad = ctx.createRadialGradient(at.X, at.Y, 0, at.X, at.Y, r);
+      for (const [o, k] of stops) grad.addColorStop(o, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${Math.min(1, a * k)})`);
+      ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(at.X, at.Y, r, 0, Math.PI * 2); ctx.fill();
+    };
+    ctx.save(); ctx.globalCompositeOperation = "lighter";
+    for (const { beam, level, color, w } of halos) {
+      const at = P(beam.from); if (!at) continue;
+      const depth = toCamera({ x: beam.from.x, y: beam.from.z, z: beam.from.y - D / 2 }).z;
+      if (!(depth > 0)) continue;
+      const rgb = hexToRgb(color), k = (level / 100) * w;
+      disc(at, h.wideRadiusM * focal / depth, h.wideStrength * k, rgb, [[0, 1], [0.35, 0.45], [0.7, 0.12], [1, 0]]);
+      disc(at, h.radiusM * focal / depth, h.strength * k, rgb, [[0, 1], [0.2, 0.55], [0.5, 0.2], [1, 0]]);
+    }
+    ctx.restore();
+  }
   /** 転がし（キック）のレンズのにじみ。光軸が視点を向くほど強く大きい（逆光の目くらまし・§29）。時刻 t の光量だけで決まる。 */
   paintFloorGlare(levels) {
     const g = STAGE_LIGHT_STYLE.floorGlare, ctx = this.ctx, P = cueLightProjector();
@@ -753,14 +793,20 @@ export class Stage3dRenderer {
     const pinColors = this.mirrorModel ? pinColorsAt(t, this.mirrorSpans, this.data?.beats) : null;
     const ctx = this.ctx, levels = fixtureLevelsAt(t, fixtureLighting ? this.data : null, this.rig, { spin01: spin.env, pinColors });
     const pools = [...this.pools].map(([id, pool]) => ({ ...pool, ...levels.get(id) })).filter((p) => p.level > 0);
-    const beams = [...this.beams].filter(([id]) => levels.get(id).level > 0)
-      .map(([id, beam]) => ({ ...beamFacingView(beam, this.view), ...levels.get(id) }));
+    // 客席を向いた転がしは、向いている度合い w だけ板を弱めて丸いにじみへ置き換える（§33）。
+    const halos = [];
+    const beams = [...this.beams].filter(([id]) => levels.get(id).level > 0).map(([id, beam]) => {
+      const value = levels.get(id), w = this.floorKickIds?.has(id) ? floorHaloWeight(beam, this.view) : 0;
+      if (w > 0) halos.push({ beam, level: value.level, color: value.color, w });
+      return { ...beamFacingView(beam, this.view), ...value, level: value.level * (1 - w) };
+    }).filter((b) => b.level > 0);
     const P = cueLightProjector(), opts = { topDown: false, tMs: t * 1000, haze: this.render.hazeAmount(35) };
     this.drawShell();
     this.render.paintPools(ctx, pools, P, opts);
     // 歌う口が出ている間は作業灯を暗くする（TOKEN_SHEET §23）。光の筋は v0.7.0 以降どおり1回だけ描く。
     this.render.paintWorkLight(ctx, pools, P, { ...opts, dim: vocal ? .55 : 1, floorClip: clipCueLightSurfaces });
     this.paintBeams(beams, P, opts);
+    this.paintFloorHalo(halos);
     // 2026-10-07: 球は客席側（v=0.62）にあるので、球より奥の灯体の後に描き、手前の灯体だけを球の上に重ねる。
     const ballDepth = fixtureLighting && this.mirrorModel ? this.mirrorBallDepth() : null;
     drawVocalLaser(ctx, vocal, t, P);
