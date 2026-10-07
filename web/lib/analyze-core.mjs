@@ -179,9 +179,14 @@ function applyDrums(ft, stft, hopSec, { sampleRate, sensitivity, stereo: stereoR
   const scratch = { tempo: JSON.parse(JSON.stringify(ft.tempo)), source: { durationSec: ft.source.durationSec } };
   const refined = refineGridWithDrums(scratch, pass1);
   const pass2 = detectDrums(stft, hopSec, { sampleRate, sensitivity, stereo, beats: scratch.tempo.beats.map((b) => b.t), reinforce });
+  // 2026-10-07 夜: 焼き込んだクラップ（分離した音や書き出したトラック由来・TOKEN_SHEET §40）がある曲では、ミックスからのスネア推定を使わない。
+  // 見本曲ではスネア推定74件のうち2・4拍目のクラップに当たるのは31件で、43件は誤検出だった。SS はクラップの印だけで点ける。
+  const bakedClap = Boolean(ft.source?.bakedTags?.clap) || ft.events.some((e) => e.tags?.some((x) => x.name === "clap"));
+  if (bakedClap) pass2.snares = [];
   mergeDrumsIntoEvents(ft, pass2);
   if (refined.applied) ft.tempo = scratch.tempo;
   ft.drums.grid = refined;
+  if (bakedClap) ft.drums.snareSuppressedByBakedClap = true;
   return ft;
 }
 
