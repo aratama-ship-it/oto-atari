@@ -1,17 +1,17 @@
 // app.js — 音源はAudioContext、無音デモだけはperformanceを時計にし、事前計算したIntentを引いて描く。
-import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs?v=20261007g";   // 2026-10-07: 変更したので版を付ける（スネア推定の抑止）
-import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261007g";
-import { loudBarSpans } from "./lib/mirror-ball-map.mjs?v=20261007g";
-import { detectSideLayer, addSideLayerEvents } from "./lib/guitar-side.mjs?v=20261007g";
-import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261007g";
-import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261007g";
+import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs?v=20261008a";   // 2026-10-07: 変更したので版を付ける（スネア推定の抑止）
+import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261008a";
+import { loudBarSpans } from "./lib/mirror-ball-map.mjs?v=20261008a";
+import { detectSideLayer, addSideLayerEvents } from "./lib/guitar-side.mjs?v=20261008a";
+import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261008a";
+import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261008a";
 import { InkRenderer } from "./renderers/ink.mjs";
 import { RigRenderer } from "./renderers/rig.mjs";
-import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261007g";
-import { collectExperienceData } from "./renderers/experience.mjs?v=20261007g";
+import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261008a";
+import { collectExperienceData } from "./renderers/experience.mjs?v=20261008a";
 import { buildGammaDraft, detectTemplate } from "./renderers/gamma-export.mjs";
 
-const VERSION = "0.7.9";
+const VERSION = "0.7.10";
 const $ = (id) => document.getElementById(id);
 const state = {
   audioCtx: null, buffer: null, source: null, startedAt: 0, offset: 0, playing: false,
