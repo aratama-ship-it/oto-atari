@@ -83,7 +83,10 @@
         "tags": [
           "snare"
         ],
-        "minConfidence": 0.4
+        "minConfidence": 0.4,
+        "onBeat": {
+          "tolSec": 0.07
+        }
       },
       "emit": {
         "intent": "splat",
@@ -308,6 +311,21 @@
           ]
         }
       }
+    },
+    {
+      "id": "lowend-front-led",
+      "on": {
+        "curve": [
+          "band.sub",
+          "band.bass"
+        ]
+      },
+      "emit": {
+        "intent": "footlight",
+        "zone": "front",
+        "normalize": "song"
+      },
+      "note": "前面LEDはサブ／ベースの大きい方で動く"
     },
     {
       "id": "guitar-side-beam",

@@ -1,8 +1,8 @@
 // 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜23・§25。
 // γの幾何ブロックは _delegation/gamma-src-2026-10-01/stage-first-person.js から無改変抽出。
-import { DRUM_WINDOW } from "./experience.mjs?v=20261008b";
-import { drawVocalLaser } from "./vocal-laser.mjs?v=20261008b";
-import { spinAt, pinLevelsAt, pinColorsAt, buildSpinTrack } from "../lib/mirror-ball-map.mjs?v=20261008b";
+import { DRUM_WINDOW } from "./experience.mjs?v=20261008c";
+import { drawVocalLaser } from "./vocal-laser.mjs?v=20261008c";
+import { spinAt, pinLevelsAt, pinColorsAt, buildSpinTrack } from "../lib/mirror-ball-map.mjs?v=20261008c";
 
 const W = 12, D = 9, H = 8;
 const FIXTURE_OUTLINE_COLOR = "#808080";
@@ -259,7 +259,11 @@ export const STAGE_BASS_STYLE = Object.freeze({
   count: 8, uStart: 0.14, uEnd: 0.86, v: 0.025, aimV: 0, aimHeight: 4.5,
   beamDeg: 30, softness: 8, color: "#8a7dff", noEnvelopeTailSec: 0.12,
 });
-const fixtureColor = (f) => f.soundRole === "bass" ? STAGE_BASS_STYLE.color : f.soundRole === "point" ? STAGE_POINT_STYLE.color : f.soundRole === "guitar" ? STAGE_GUITAR_STYLE.color
+export const STAGE_FRONT_LED_STYLE = Object.freeze({
+  count: 16, uStart: 0.10, uEnd: 0.90, v: 0.995, hM: 0.04,
+  color: STAGE_BASS_STYLE.color, releaseSec: 0.12, offBelow: 0.04,
+});
+const fixtureColor = (f) => f.soundRole === "bass" || f.soundRole === "lowend" ? STAGE_BASS_STYLE.color : f.soundRole === "point" ? STAGE_POINT_STYLE.color : f.soundRole === "guitar" ? STAGE_GUITAR_STYLE.color
   : f.soundRole === "mirror-pin" ? STAGE_MIRROR_STYLE.pinColor : f.kind === "mirrorball" ? STAGE_MIRROR_STYLE.ballColor : COLORS[f.mount.type];
 
 // 音程がある場合はそれを正本にする。表示位置の丸めや同じx値で別の音程を束ねない。
@@ -293,6 +297,10 @@ export function createDefaultRig(pointSources = [], { mirrorBall = false, bassSo
     fixtureType: "moving-beam", family: "moving", role: "ギター", soundRole: "guitar", guitarSide: tag === "L" ? "left" : "right", guitarIndex: k }));
   for (let k = 0; k < 20; k++) fixtures.push({ id: `led-bar-${String(k + 1).padStart(2, "0")}`, no: 53 + k, name: `LEDバー ${k + 1}`,
     mount: { type: "truss", trussId: "bar-t-01", u: (k + 0.5) / 20 }, kind: "fixed", fixtureType: "led-bar", family: "led", beamDeg: 40, role: "吊り" });
+  const frontLed = STAGE_FRONT_LED_STYLE;
+  for (let k = 0; k < frontLed.count; k++) fixtures.push({ id: `front-led-${String(k + 1).padStart(2, "0")}`, no: 121 + k, name: `前面LED ${k + 1}`,
+    mount: { type: "floor", u: frontLed.uStart + (frontLed.uEnd - frontLed.uStart) * k / (frontLed.count - 1), v: frontLed.v, h: frontLed.hM },
+    kind: "fixed", fixtureType: "led-bar", family: "led", beamDeg: 40, role: "前面LED", soundRole: "lowend" });
   const p = STAGE_POINT_STYLE;
   const sources = [...new Map(pointSources.map((point) => {
     const identity = pointIdentity(point); return [identity.key, identity];
@@ -425,9 +433,29 @@ export function fixtureLevelsAt(t, expData, rig, { spin01 = 0, pinColors = null 
     const life = bassLifeAt(note, t - note.t);
     if (life > 0) value.level = Math.max(value.level, life * clamp(finite(note.level, 0), 0, 1) * 100);
   }
+  // 前面LED: 現在値だけで決まる過去0.12秒の減衰最大値。未来フレームは参照しない。
+  const footlight = footlightLevelAt(t, expData.footlight);
+  if (footlight > 0) for (const f of rig.fixtures) if (f.soundRole === "lowend") {
+    const d = Math.abs((f.mount.u - 0.5) / ((STAGE_FRONT_LED_STYLE.uEnd - STAGE_FRONT_LED_STYLE.uStart) / 2));
+    const level = footlight * clamp((1.1 * footlight - d) / 0.15, 0, 1);
+    levels.get(f.id).level = Math.max(levels.get(f.id).level, level * 100);
+  }
   // ミラーボールのピン: 回っている間の常時の明るさ＋拍（キック・スネア、無ければ拍）の閃光。
   if (rig.mirror) pinLevelsAt(t, expData, spin01).forEach((level, i) => { const v = levels.get(rig.mirror.pinIds[i]); v.level = level; if (pinColors) v.color = pinColors[i]; });
   return levels;
+}
+
+/** 時刻tまでの値だけを使う前面LEDの包絡（立上り即時・releaseSecで線形消灯）。 */
+export function footlightLevelAt(t, footlight) {
+  if (!footlight || !(footlight.hopSec > 0) || !Array.isArray(footlight.values)) return 0;
+  const s = STAGE_FRONT_LED_STYLE, last = Math.min(footlight.values.length - 1, Math.floor(t / footlight.hopSec));
+  let peak = 0;
+  for (let i = Math.max(0, Math.ceil((t - s.releaseSec) / footlight.hopSec)); i <= last; i++) {
+    const age = t - i * footlight.hopSec;
+    if (age < 0 || age >= s.releaseSec) continue;
+    peak = Math.max(peak, clamp(Number(footlight.values[i]) || 0, 0, 1) * (1 - age / s.releaseSec));
+  }
+  return peak >= s.offBelow ? peak : 0;
 }
 
 /** 発音から age 秒の相対光量（0〜1）。純粋関数。 */
@@ -599,6 +627,7 @@ export function buildStageModel(design, rig, { overlay, plan, engine, body }) {
   for (const f of model.fixtures) {
     const fixture = fixtureById.get(f.id);
     if (!fixture) continue;
+    f.ledBar = fixture.fixtureType === "led-bar";
     if (fixture.mount.type === "floor") f.h = floorZ;
     const led = fixture.fixtureType === "led-bar" || fixture.kind === "mirrorball";   // 自発光・球は模型も光の筋も持たない
     f.body = fixtureBodyGeometry(fixture, lights[f.id], f, model.dims, body);
@@ -615,11 +644,15 @@ export function buildStageModel(design, rig, { overlay, plan, engine, body }) {
   return model;
 }
 
+// overlay の marker は family も保証しない。buildStageModel が元の器具から付けた印で判定する。
+export const isLedMarker = (marker) => marker.ledBar === true;
+
 export class Stage3dRenderer {
   // mirrorBall: 舞台にミラーボール＋ピン2灯を置くか。既定は操作できる本体（interactive）だけオン。外側が描く歌唱試験（interactive:false）には足さない。
   // bassSources: 最初から置くベース灯の音高（光のデモで開く本体が起動時に模型を2回作らないため）。
   constructor(canvas, { interactive = true, mirrorBall = interactive, bassSources = [] } = {}) {
     this.canvas = canvas; this.ctx = canvas.getContext("2d"); this.data = null;
+    this.lastLevels = new Map();
     this.mirrorBallOn = Boolean(mirrorBall); this.mirrorTrack = null; this.mirrorInfo = null;
     this.render = window.SHOSAI_LIGHT_RENDER;
     this.body = window.FIXTURE_BODY;
@@ -683,7 +716,9 @@ export class Stage3dRenderer {
   rigFor(data) {
     return createDefaultRig([...(data?.pointSources || []), ...(data?.points || [])], { mirrorBall: this.mirrorBallOn, bassSources: data?.bassSources || data?.bassNotes || [] });
   }
-  reset() { this.data = null; }
+  reset() { this.data = null; this.lastLevels = new Map(); }
+  // 最後に描いた器具の光量。検査用の読み取り口であり、舞台状態は書き換えない。
+  lastStageLevels() { return Object.fromEntries([...this.lastLevels].map(([id, value]) => [id, value.level])); }
   setViewpoint(id) { if (VIEWPOINTS[id]) { this.viewpoint = id; this.view = { ...VIEWPOINTS[id] }; } }
   setCamera(view) {
     if (![view.x, view.y, view.z, view.yaw, view.pitch].every(Number.isFinite)) return;
@@ -710,7 +745,7 @@ export class Stage3dRenderer {
       .sort((a,b) => toCamera(b.point).z - toCamera(a.point).z);
     for (const { marker, point } of fixtures) {
       if (keep && !keep(toCamera(point).z)) continue;
-      const value = levels.get(marker.id), led = marker.id.startsWith("led-bar-");
+      const value = levels.get(marker.id), led = isLedMarker(marker);
       const alpha = value.level / 100;
       if (led) {
         drawLedBar(this.ctx, { ...point, y: Math.max(0.03, point.y) }, value.color, alpha);
@@ -818,6 +853,7 @@ export class Stage3dRenderer {
     const spin = this.mirrorTrack ? spinAt(this.mirrorTrack, t) : { env: 0, phaseDeg: 0 };
     const pinColors = this.mirrorModel ? pinColorsAt(t, this.mirrorSpans, this.data?.beats) : null;
     const ctx = this.ctx, levels = fixtureLevelsAt(t, fixtureLighting ? this.data : null, this.rig, { spin01: spin.env, pinColors });
+    this.lastLevels = levels;
     const pools = [...this.pools].map(([id, pool]) => ({ ...pool, ...levels.get(id) })).filter((p) => p.level > 0);
     // 客席を向いた転がしは、向いている度合い w だけ板を弱めて丸いにじみへ置き換える（§33）。
     const halos = [];

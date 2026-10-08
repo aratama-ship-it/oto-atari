@@ -1,7 +1,7 @@
 // validate.mjs — Feature Timeline / Mapping の軽量検証（外部ライブラリなし）。エラー文字列の配列を返す（空＝合格）。
 const BANDS = ["sub", "bass", "lowmid", "mid", "high", "air"];
 const EVENT_TYPES = new Set(["onset", "accent", "drop", "build", "silence", "sectionChange"]);
-const INTENTS = new Set(["splat", "pulse", "wash", "strobe", "sweep", "blackout", "palette", "haze"]);
+const INTENTS = new Set(["splat", "pulse", "wash", "strobe", "sweep", "blackout", "palette", "haze", "footlight"]);
 const in01 = (v) => typeof v === "number" && v >= 0 && v <= 1;
 const finite = (v) => typeof v === "number" && Number.isFinite(v);
 
@@ -83,9 +83,12 @@ export function validateMapping(m) {
     if (r.emit?.intent === "point" && !(r.on?.event && r.emit.x !== undefined && r.emit.level !== undefined && r.emit.dur !== undefined)) e.push(`rules[${i}]: point は on.event と x/level/dur が必要`);
     if (r.emit?.level && typeof r.emit.level === "object" && r.emit.level.secondaryFrom !== undefined &&
       (typeof r.emit.level.from !== "string" || typeof r.emit.level.secondaryFrom !== "string" || !in01(r.emit.level.secondaryWeight))) e.push(`rules[${i}]: level の secondaryFrom には from と0〜1の secondaryWeight が必要`);
-    if (r.emit && (r.emit.intent === "wash" || r.emit.intent === "haze") && !(r.on && r.on.curve)) e.push(`rules[${i}]: ${r.emit.intent} は on.curve が必要`);
+    if (r.emit && (r.emit.intent === "wash" || r.emit.intent === "haze" || r.emit.intent === "footlight") && !(r.on && r.on.curve)) e.push(`rules[${i}]: ${r.emit.intent} は on.curve が必要`);
+    if (r.emit?.intent === "footlight" && !(typeof r.on?.curve === "string" || (Array.isArray(r.on?.curve) && r.on.curve.length > 0 && r.on.curve.every((curve) => typeof curve === "string")))) e.push(`rules[${i}]: footlight の on.curve は文字列または文字列配列が必要`);
+    if (r.emit?.normalize !== undefined && r.emit.normalize !== "song") e.push(`rules[${i}].emit.normalize は song のみ`);
     if (r.emit && r.emit.intent === "palette" && !(r.emit.name || (r.emit.cycle && r.emit.cycle.length))) e.push(`rules[${i}]: palette は name か cycle が必要`);
     if (r.quantize && !["none", "beat", "half", "bar"].includes(r.quantize.to)) e.push(`rules[${i}].quantize.to が不正`);
+    if (r.on?.onBeat !== undefined && !(r.on.onBeat && typeof r.on.onBeat === "object" && Object.keys(r.on.onBeat).length === 1 && Object.hasOwn(r.on.onBeat, "tolSec") && finite(r.on.onBeat.tolSec) && r.on.onBeat.tolSec > 0 && r.on.onBeat.tolSec <= 0.2)) e.push(`rules[${i}].on.onBeat は { tolSec: 0 より大きく 0.2 以下の数 }`);
     if (r.limit !== undefined && !(r.limit && Number.isInteger(r.limit.maxPerSec) && r.limit.maxPerSec > 0)) e.push(`rules[${i}].limit.maxPerSec は正の整数`);
   });
   return e;

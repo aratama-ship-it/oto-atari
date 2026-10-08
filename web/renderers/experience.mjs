@@ -71,7 +71,7 @@ export function ledBarsForSlot(slot, N, { count = LED_COUNT, layout = "interleav
  * - 打楽器は srcTag で判定し、同じ楽器の 10ms 以内の打点は 1 回にまとめる（splat＋pulse の二重発火対策）。
  * - ピアノは intent:"point"。無音と戻り（drop）は events から読む。
  */
-export function collectExperienceData(discrete = [], events = [], { beats = null, sections = [] } = {}) {
+export function collectExperienceData(discrete = [], events = [], { beats = null, sections = [], continuous = [] } = {}) {
   const sorted = discrete.slice().sort((a, b) => a.t - b.t);
   const hits = [], points = [];
   const lastByTag = {};
@@ -115,7 +115,10 @@ export function collectExperienceData(discrete = [], events = [], { beats = null
   const bassSources = events.filter((e) => e.type === "note" && e.instrumentCandidate === "bass").map((e) => ({ pitch: e.pitchMidi }));
   const bassNotes = sorted.filter((d) => d.intent === "point" && d.srcInstrument === "bass")
     .map((d) => ({ t: d.t, soundDur: d.srcSoundDur ?? d.dur, pitch: d.srcPitchMidi, level: clamp(d.level ?? 0, 0, 1), envelope: d.srcEnvelope }));
-  return { hits, points, pointSources, bassSources, bassNotes, cues, maxDur, mode: points.length ? "piano" : "drums", ledBars: cls.bars, ledFallback: !usable, beats: beatList };
+  // 前面LEDは連続Intentだけを受け取る。規則が無効なら compileIntents の結果から消えるため null になる。
+  const footlightIntent = continuous.find((c) => c.intent === "footlight" && Array.isArray(c.values) && c.values.length > 0);
+  const footlight = footlightIntent ? { hopSec: footlightIntent.hopSec, values: footlightIntent.values.slice() } : null;
+  return { hits, points, pointSources, bassSources, bassNotes, cues, maxDur, mode: points.length ? "piano" : "drums", ledBars: cls.bars, ledFallback: !usable, beats: beatList, footlight };
 }
 
 // 舞台表示が打楽器の減衰窓を参照する。

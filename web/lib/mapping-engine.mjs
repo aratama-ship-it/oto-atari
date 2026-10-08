@@ -3,7 +3,7 @@
 
 export const INTENT_FORMAT = "oto-atari.intent-timeline";
 const DISCRETE = new Set(["splat", "pulse", "strobe", "sweep", "blackout", "palette", "point"]);
-const CONTINUOUS = new Set(["wash", "haze"]);
+const CONTINUOUS = new Set(["wash", "haze", "footlight"]);
 
 export function compileIntents(ft, mapping, { limits } = {}) {
   assertFormat(ft, "oto-atari.feature-timeline", [1, 2]);
@@ -19,7 +19,7 @@ export function compileIntents(ft, mapping, { limits } = {}) {
   for (const rule of rules) {
     if (!rule.emit || rule.emit.intent !== "palette" || !rule.on || !rule.on.event) continue;
     let cycleIdx = 0;
-    for (const ev of matchEvents(events, rule.on, sectionAt)) {
+    for (const ev of matchEvents(events, rule.on, sectionAt, ft.tempo)) {
       let name = rule.emit.name;
       if (rule.emit.cycle && rule.emit.cycle.length) { name = rule.emit.cycle[cycleIdx % rule.emit.cycle.length]; cycleIdx++; }
       if (name && mapping.palettes && mapping.palettes[name]) paletteTimeline.push({ t: ev.t, name, ruleId: rule.id });
@@ -35,7 +35,7 @@ export function compileIntents(ft, mapping, { limits } = {}) {
   for (const rule of rules) {
     const emit = rule.emit;
     if (!emit || !DISCRETE.has(emit.intent) || emit.intent === "palette" || !rule.on || !rule.on.event) continue;
-    for (const ev of matchEvents(events, rule.on, sectionAt)) {
+    for (const ev of matchEvents(events, rule.on, sectionAt, ft.tempo)) {
       const t = quantizeTime(ev.t, rule.quantize, beatGrid, ft.tempo);
       const pal = palettes[paletteAt(t)] || {};
       const intent = { t: round3(t), intent: emit.intent, ruleId: rule.id, srcType: ev.type, srcStrength: ev.strength };
@@ -74,9 +74,13 @@ export function compileIntents(ft, mapping, { limits } = {}) {
   for (const rule of rules) {
     const emit = rule.emit;
     if (!emit || !CONTINUOUS.has(emit.intent) || !rule.on || !rule.on.curve) continue;
-    const src = ft.curves[rule.on.curve];
-    if (!Array.isArray(src)) continue;
-    const levelSpec = emit.level !== undefined ? emit.level : { from: rule.on.curve };
+    const curveNames = Array.isArray(rule.on.curve) ? rule.on.curve : [rule.on.curve];
+    const sourceCurves = curveNames.map((name) => ft.curves[name]);
+    if (!sourceCurves.length || sourceCurves.some((curve) => !Array.isArray(curve))) continue;
+    // 複数の帯域は各フレームで大きい方を採る。曲内正規化も、この合成済みの元曲線を基準にする。
+    const src = Float32Array.from({ length: frames }, (_, i) => Math.max(...sourceCurves.map((curve) => Number(curve[i]) || 0)));
+    if (emit.normalize === "song") normalizeSong(src);
+    const levelSpec = emit.level !== undefined ? emit.level : { from: "value" };
     const values = new Float32Array(frames);
     const gate = rule.on.section && rule.on.section.label ? new Set([].concat(rule.on.section.label)) : null;
     for (let i = 0; i < frames; i++) {
@@ -91,7 +95,7 @@ export function compileIntents(ft, mapping, { limits } = {}) {
       ? Array.from({ length: frames }, (_, i) => resolveParam(colorSpec, { value: src[i], curves: ft.curves, i }, palettes[paletteAt(i * hopSec)] || {}, ft, i))
       : null;
     const staticColor = colorPerFrame ? null : resolveParam(colorSpec, { value: 0, curves: ft.curves, i: 0 }, palettes[paletteAt(0)] || {}, ft, 0);
-    continuous.push({ intent: emit.intent, ruleId: rule.id, zone: emit.zone || "all", curve: rule.on.curve, values: Array.from(values, round3), color: staticColor, colorPerFrame,
+    continuous.push({ intent: emit.intent, ruleId: rule.id, zone: emit.zone || "all", curve: rule.on.curve, hopSec, values: Array.from(values, round3), color: staticColor, colorPerFrame,
       paletteKey: typeof colorSpec === "string" && colorSpec.startsWith("@palette.") ? colorSpec.slice(9) : null });
   }
 
@@ -103,6 +107,17 @@ export function compileIntents(ft, mapping, { limits } = {}) {
     discrete: thinned, continuous,
     stats: { discreteBefore: discrete.length, discreteAfter: thinned.length, rules: rules.length },
   };
+}
+
+/** 曲内の60/98パーセンタイルを0/1へ写す。平坦な曲線でも除数を0にしない。 */
+function normalizeSong(values) {
+  const sorted = Array.from(values).sort((a, b) => a - b);
+  const percentile = (p) => {
+    const pos = (sorted.length - 1) * p, lo = Math.floor(pos), hi = Math.ceil(pos);
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+  };
+  const lo = percentile(0.60), hi = percentile(0.98), span = Math.max(0.02, hi - lo);
+  for (let i = 0; i < values.length; i++) values[i] = clamp01((values[i] - lo) / span);
 }
 
 /** 再生時の問い合わせ: [t0, t1) の離散 Intent。二分探索。 */
@@ -146,7 +161,7 @@ function makeSectionLookup(sections) {
   return (t) => { for (const s of sections) if (t >= s.start && t < s.end) return s; return sections[sections.length - 1] || null; };
 }
 
-function matchEvents(events, on, sectionAt) {
+function matchEvents(events, on, sectionAt, tempo) {
   const types = new Set([].concat(on.event));
   const bands = on.band ? new Set([].concat(on.band)) : null;
   const tags = on.tags ? [].concat(on.tags) : null;
@@ -154,6 +169,10 @@ function matchEvents(events, on, sectionAt) {
   const labels = on.section && on.section.label ? new Set([].concat(on.section.label)) : null;
   const instruments = on.instrument ? new Set([].concat(on.instrument)) : null;
   const stems = on.stem ? new Set([].concat(on.stem)) : null;
+  const onBeat = on.onBeat;
+  const beatTimes = tempo && Array.isArray(tempo.beats) ? tempo.beats.map((beat) => beat.t) : [];
+  // 拍の推定が弱い曲では、スネア等の既存の打点を誤って落とさない。
+  const filterOnBeat = onBeat && !(tempo && tempo.confidence < 0.3) && beatTimes.length >= 8;
   return events.filter((ev) => {
     if (!types.has(ev.type)) return false;
     if (on.minStrength !== undefined && (ev.strength ?? 0) < on.minStrength) return false;
@@ -169,8 +188,22 @@ function matchEvents(events, on, sectionAt) {
       if (!ok) return false;
     }
     if (labels) { const s = sectionAt(ev.t); if (!s || !labels.has(s.label)) return false; }
+    if (filterOnBeat && !isNearBeat(ev.t, beatTimes, onBeat.tolSec)) return false;
     return true;
   });
+}
+
+// 昇順の拍から最も近い候補を二分探索する。打点数×拍数の総当たりにはしない。
+function isNearBeat(t, beatTimes, tolSec) {
+  let lo = 0, hi = beatTimes.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (beatTimes[mid] < t) lo = mid + 1;
+    else hi = mid;
+  }
+  const before = beatTimes[Math.max(0, lo - 1)];
+  const after = beatTimes[lo];
+  return Math.min(Math.abs(t - before), Math.abs(t - after)) <= tolSec;
 }
 
 function quantizeTime(t, q, beatGrid, tempo) {

@@ -1,18 +1,18 @@
 // app.js — 曲はaudio要素、解析と任意の合図音だけはAudioContext、無音デモはperformanceを時計にする。
-import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs?v=20261008b";   // 2026-10-07: 変更したので版を付ける（スネア推定の抑止）
-import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261008b";
-import { loudBarSpans } from "./lib/mirror-ball-map.mjs?v=20261008b";
-import { detectSideLayer, addSideLayerEvents } from "./lib/guitar-side.mjs?v=20261008b";
-import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261008b";
-import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261008b";
-import { pairFiles } from "./lib/file-pairing.mjs?v=20261008b";   // 2026-10-08: 同じ名前の音源と解析JSONを組にする（TOKEN_SHEET §45）
+import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs?v=20261008c";   // 2026-10-07: 変更したので版を付ける（スネア推定の抑止）
+import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261008c";
+import { loudBarSpans } from "./lib/mirror-ball-map.mjs?v=20261008c";
+import { detectSideLayer, addSideLayerEvents } from "./lib/guitar-side.mjs?v=20261008c";
+import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261008c";
+import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261008c";
+import { pairFiles } from "./lib/file-pairing.mjs?v=20261008c";   // 2026-10-08: 同じ名前の音源と解析JSONを組にする（TOKEN_SHEET §45）
 import { InkRenderer } from "./renderers/ink.mjs";
 import { RigRenderer } from "./renderers/rig.mjs";
-import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261008b";
-import { collectExperienceData } from "./renderers/experience.mjs?v=20261008b";
+import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261008c";
+import { collectExperienceData } from "./renderers/experience.mjs?v=20261008c";
 import { buildGammaDraft, detectTemplate } from "./renderers/gamma-export.mjs";
 
-const VERSION = "0.7.11";
+const VERSION = "0.7.12";
 const $ = (id) => document.getElementById(id);
 const state = {
   audioCtx: null, buffer: null, source: null, offset: 0, playing: false,
@@ -42,6 +42,8 @@ const exp = { data: null };
 // ミラーボールの初期状態: 既定オン。`?mirror=off` で切って開ける（旧来の舞台と見比べる・従来の検査用）。
 if (new URLSearchParams(location.search).get("mirror") === "off") $("mirrorBallToggle").checked = false;
 const stage3d = new Stage3dRenderer($("stage3dCanvas"), { mirrorBall: $("mirrorBallToggle").checked, bassSources: DEMO_BASS_NOTES });
+// 検査用の読み取り口。最後に描いた器具の光量（0〜100）だけを返し、状態は書き換えない。
+window.otoAtari.stageLevels = () => stage3d.lastStageLevels();
 const phoneMedia = matchMedia("(max-width: 699px), (max-width: 999px) and (max-height: 500px)");
 const compactMedia = matchMedia("(max-width: 1199px), (pointer: coarse)");
 const ui = { settingsOpen: false, panel: "panelSource", sourceBusy: false };
@@ -183,7 +185,7 @@ function recompile() {
   ink.setSurface(state.mapping.palettes[state.mapping.startPalette]?.surface);
   ink.reset(); rig.reset();
   ink.pointMode = rig.pointMode = state.intents.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass");
-  exp.data = collectExperienceData(state.intents.discrete, state.ft.events, { beats: state.ft.tempo && state.ft.tempo.confidence >= 0.3 ? state.ft.tempo.beats : null, sections: state.ft.sections || [] });
+  exp.data = collectExperienceData(state.intents.discrete, state.ft.events, { beats: state.ft.tempo && state.ft.tempo.confidence >= 0.3 ? state.ft.tempo.beats : null, sections: state.ft.sections || [], continuous: state.intents.continuous });
   // ミラーボールが出て回る区間（音圧の高い小節のまとまり・小節の頭で出入り・2026-10-07 夜・TOKEN_SHEET §37）。拍が取れない曲は1秒ならしの音量。無音デモは合成パターンの明示した区間。
   // 無音デモのベースは合成パターンを舞台へ直接渡す（note 候補を装わない）。実音源は解析JSONの bass note から。
   if (state.demo) {
@@ -642,7 +644,7 @@ function updateStageGuide() {
     $("stageGuideTitle").textContent = "舞台（3D）";
     const spots = stage3d.rig.fixtures.filter((f) => f.soundRole === "point").length;
     const bassWashes = stage3d.rig.fixtures.filter((f) => f.soundRole === "bass").length;
-    $("stageGuideText").textContent = `転がし＝キック（白青のウォッシュを客席側へ）／SS＝スネア・クラップ（橙・広め）／LEDバー20本＝ハイハット（金・バーだけ）／横の細いビーム6台＝左右に振られたギター（マゼンタ・左の音は下手、右の音は上手から・一打ごとに順送り）／吊りスポット${spots}台・2列＝ピアノ・プラックなどのアタック（水緑・音程ごとに別の灯、低音は左・高音は右）。${bassWashes ? `床奥のウォッシュ${bassWashes}台＝ベース（藍紫・音程ごとに別の灯・音量の減り方で消える）。` : ""}${$("mirrorBallToggle").checked ? "ミラーボール＝音圧の高い小節のまとまり（小節の頭で出入り）の間だけ現れて回り、ピン2灯が拍（キック・スネア）で瞬いて反射の粒が空間を流れます。ピンの色は区間に入るたびと2小節ごとに変わります。" : ""}戻りは未対応。ドラッグで見回し。`;
+    $("stageGuideText").textContent = `転がし＝キック（白青のウォッシュを客席側へ）／SS＝スネア・クラップ（橙・広め）／LEDバー20本＝ハイハット（金・バーだけ）／前面LED16本＝ローエンド（紫）／横の細いビーム6台＝左右に振られたギター（マゼンタ・左の音は下手、右の音は上手から・一打ごとに順送り）／吊りスポット${spots}台・2列＝ピアノ・プラックなどのアタック（水緑・音程ごとに別の灯、低音は左・高音は右）。${bassWashes ? `床奥のウォッシュ${bassWashes}台＝ベース（藍紫・音程ごとに別の灯・音量の減り方で消える）。` : ""}${$("mirrorBallToggle").checked ? "ミラーボール＝音圧の高い小節のまとまり（小節の頭で出入り）の間だけ現れて回り、ピン2灯が拍（キック・スネア）で瞬いて反射の粒が空間を流れます。ピンの色は区間に入るたびと2小節ごとに変わります。" : ""}戻りは未対応。ドラッグで見回し。`;
     return;
   }
   const point = !!state.intents?.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass");
