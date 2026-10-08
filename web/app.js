@@ -1,25 +1,40 @@
-// app.js — 音源はAudioContext、無音デモだけはperformanceを時計にし、事前計算したIntentを引いて描く。
-import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs?v=20261008a";   // 2026-10-07: 変更したので版を付ける（スネア推定の抑止）
-import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261008a";
-import { loudBarSpans } from "./lib/mirror-ball-map.mjs?v=20261008a";
-import { detectSideLayer, addSideLayerEvents } from "./lib/guitar-side.mjs?v=20261008a";
-import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261008a";
-import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261008a";
+// app.js — 曲はaudio要素、解析と任意の合図音だけはAudioContext、無音デモはperformanceを時計にする。
+import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs?v=20261008b";   // 2026-10-07: 変更したので版を付ける（スネア推定の抑止）
+import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261008b";
+import { loudBarSpans } from "./lib/mirror-ball-map.mjs?v=20261008b";
+import { detectSideLayer, addSideLayerEvents } from "./lib/guitar-side.mjs?v=20261008b";
+import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261008b";
+import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261008b";
+import { pairFiles } from "./lib/file-pairing.mjs?v=20261008b";   // 2026-10-08: 同じ名前の音源と解析JSONを組にする（TOKEN_SHEET §45）
 import { InkRenderer } from "./renderers/ink.mjs";
 import { RigRenderer } from "./renderers/rig.mjs";
-import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261008a";
-import { collectExperienceData } from "./renderers/experience.mjs?v=20261008a";
+import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261008b";
+import { collectExperienceData } from "./renderers/experience.mjs?v=20261008b";
 import { buildGammaDraft, detectTemplate } from "./renderers/gamma-export.mjs";
 
-const VERSION = "0.7.10";
+const VERSION = "0.7.11";
 const $ = (id) => document.getElementById(id);
 const state = {
-  audioCtx: null, buffer: null, source: null, startedAt: 0, offset: 0, playing: false,
+  audioCtx: null, buffer: null, source: null, offset: 0, playing: false,
   ft: null, mapping: null, intents: null, disabledRules: new Set(), lastT: -1, view: "stage3d",
   gammaTemplate: null, fileName: "", focus: false, demo: false,
 };
 $("version").textContent = `v${VERSION}`;
-window.otoAtari = { state }; // 検証用（ブラウザ自動操作から状態を読む。書き換え用ではない）。audio は下で足す
+const music = $("music");
+window.otoAtari = { state, music }; // 検証用（ブラウザ自動操作から状態を読む。書き換え用ではない）。audio は下で足す
+music.addEventListener("ended", () => {
+  if (!state.demo && state.playing) { state.playing = false; state.offset = 0; state.musicClockTime = 0; updatePlayButton(); }
+});
+// OS側の出力先切替などで要素だけが止まった場合は、アプリが再生中の表示を保たない。
+// stop/reset は pause より先に state.playing を false にするので、ここには入らない。
+music.addEventListener("pause", () => {
+  if (!state.playing || state.demo || music.ended || !music.paused) return;
+  state.offset = music.currentTime;
+  state.musicClockTime = state.offset; state.musicClockPerf = performance.now();
+  state.playing = false; updatePlayButton();
+  setStatus("再生が止まりました（出力先の切り替えなど）。▶ で続きから再生します");
+  diagNote(`music paused externally at ${state.offset.toFixed(2)}s`);
+});
 const ink = new InkRenderer($("inkCanvas"));
 const rig = new RigRenderer($("rigCanvas"));
 // 舞台へ渡す打点・単音・ベースのまとめ（2026-10-07 に「体験」表示を外し、データだけ残した。TOKEN_SHEET §32）。
@@ -38,31 +53,17 @@ function ctx() {
   if (!state.audioCtx) {
     const ac = new (window.AudioContext || window.webkitAudioContext)();
     state.audioCtx = ac; audio.ctxCreatedMs = performance.now(); audio.ctxCount += 1;
-    // Safari対策: contextの生成直後、ユーザー操作と同じ呼び出しスタックの中で
-    // 同期的に resume() と「無音1サンプルの再生」を行う。Safariは resume() を呼ぶだけでなく
-    // 実際に音を鳴らす操作までがユーザー操作起点でないと、後から再生してもずっと無音のままに
-    // なることがある（本人環境2026-09-28実測: Safariのみ無音・Chromeは正常）。
-    ac.resume().catch(() => {});
-    try { const src = ac.createBufferSource(); src.buffer = ac.createBuffer(1, 1, ac.sampleRate); src.connect(ac.destination); src.start(0); } catch (_) {}
-    // OS都合の中断（バックグラウンド化・Bluetooth切替等）で suspended になったまま気付かないと
-    // 「再生中の表示なのに音が出ない」状態になる。検知して復帰を試み、UIの表示とずれないようにする。
-    ac.addEventListener("statechange", () => {
-      diagNote("audioCtx statechange → " + ac.state);
-      if (ac.state === "suspended" && state.playing && !state.demo) {
-        ac.resume().catch(() => {});
-        setTimeout(() => { if (ac.state === "suspended" && state.playing && !state.demo) { setStatus("音声が中断されました。もう一度 ▶ を押してください"); stop(); } }, 800);
-      }
-    });
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && state.playing && !state.demo && ac.state === "suspended") ac.resume().catch(() => {});
-    });
+    ac.addEventListener("statechange", () => diagNote("audioCtx statechange → " + ac.state));
   }
   return state.audioCtx;
 }
 async function loadAudio(arrayBuffer, name) {
   // 読み込めないファイルでも、現在の音源や無音デモを失わない。
   const buf = await ctx().decodeAudioData(arrayBuffer.slice(0));
+  const url = URL.createObjectURL(new Blob([arrayBuffer], { type: audioMime(name) }));
   stop();
+  if (state.musicUrl) URL.revokeObjectURL(state.musicUrl);
+  state.musicUrl = url; music.src = url; music.load();
   state.demo = false; $("demoBanner").hidden = true; updatePlayButton();
   state.buffer = null; state.mono = null; state.stereo = null; state.offset = 0;
   $("btnPlay").disabled = true; $("btnFocus").disabled = true; $("seek").disabled = true;
@@ -84,6 +85,18 @@ async function loadAudio(arrayBuffer, name) {
   $("seek").max = String(buf.duration); $("seek").disabled = false;
   $("emptyState").hidden = true;
   setStatus(`${name} — ${fmt(buf.duration)} / ${buf.sampleRate} Hz / ${buf.numberOfChannels}ch`);
+}
+function audioMime(name) {
+  const ext = name.split(".").pop()?.toLowerCase();
+  return ({ mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", aac: "audio/aac", ogg: "audio/ogg", opus: "audio/ogg", flac: "audio/flac" })[ext] || "";
+}
+const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+function unlockMusicElement() {
+  // 自動読込の完了後も play を許可するため、タップ中に同じ要素で無音WAVを開始してすぐ止める。
+  music.src = SILENT_WAV;
+  const unlocking = music.play();
+  queueMicrotask(() => { music.pause(); music.currentTime = 0; });
+  unlocking.catch(() => {});
 }
 async function analyzeInBrowser() {
   const buf = state.buffer; if (!buf) return;
@@ -216,8 +229,15 @@ function duration() { return state.demo ? state.ft.source.durationSec : (state.b
 function now() {
   if (!hasPlayback()) return 0;
   if (!state.playing) return state.offset;
-  const clock = state.demo ? performance.now() / 1000 : state.audioCtx.currentTime;
-  return Math.min(duration(), state.offset + clock - state.startedAt);
+  if (state.demo) return Math.min(duration(), state.offset + performance.now() / 1000 - state.startedAt);
+  const raw = Number.isFinite(music.currentTime) ? music.currentTime : state.offset;
+  const perf = performance.now();
+  if (raw > (state.musicClockTime ?? -1) + 0.0001) {
+    state.musicClockTime = raw; state.musicClockPerf = perf;
+  }
+  const observed = state.musicClockTime ?? raw;
+  const interpolated = observed + Math.min(0.25, Math.max(0, (perf - (state.musicClockPerf ?? perf)) / 1000));
+  return Math.min(duration(), Math.max(state.offset, observed, interpolated));
 }
 function updatePlayButton() {
   $("btnPlay").textContent = state.playing ? "❚❚" : "▶";
@@ -230,39 +250,51 @@ async function play() {
     state.startedAt = performance.now() / 1000; state.playing = true;
     state.lastT = state.offset - 0.001; updatePlayButton(); return;
   }
-  // 2026-10-07 夜: Safari は、Mac の出力先が切り替わった後も古い AudioContext を使い続けて無音になる（running のまま・時計も進む）。
-  // 一時停止からの再生で AudioContext が rebuildAfterMs より古ければ作り直す（復号済みの音源はそのまま使える）。TOKEN_SHEET §41。
-  if (state.audioCtx && performance.now() - audio.ctxCreatedMs > audio.rebuildAfterMs) rebuildAudio("context older than 10 min at play", { restart: false });
-  const buffer = state.buffer, ac = ctx();
-  if (ac.state !== "running") { try { await ac.resume(); } catch (_) {} }
-  if (ac.state !== "running") { armAudioRecovery(`play: state=${ac.state}`); return; }
-  if (state.playing || state.demo || state.buffer !== buffer) return; // resume待ちの間の読込・デモ復帰・二重再生を除く
-  const src = ac.createBufferSource(); src.buffer = state.buffer; src.connect(ac.destination);
-  src.onended = () => { if (state.source === src && state.playing && now() >= buffer.duration - 0.05) { stop(); state.offset = 0; } };
-  state.startedAt = ac.currentTime; src.start(0, state.offset); state.source = src; state.playing = true; resetAudition();
+  if ($("audition").checked) { const ac = ctx(); ac.resume().catch(() => {}); }
+  if (Math.abs(music.currentTime - state.offset) >= 0.02) music.currentTime = state.offset;
+  // play() は await より前、クリック/キー操作と同じスタックで呼ぶ（Safari の自動再生制限）。
+  const startedAt = music.currentTime;
+  const playing = music.play();
+  state.musicClockTime = startedAt; state.musicClockPerf = performance.now();
+  state.playing = true; resetAudition();
   updatePlayButton();
-  // 2026-10-07 夜: Safari で「再生中の表示なのに音が出ない」対策。開始から0.7秒たっても音源時計が進まない／running でないなら、次のタップで立て直す。
-  const startedCtxTime = ac.currentTime;
+  try { await playing; } catch (err) {
+    if (state.playing) { state.playing = false; updatePlayButton(); armAudioRecovery(`play rejected: ${err?.name || err}`); }
+    return;
+  }
+  // 開始後も currentTime が動かなければ、次の操作で同じ要素の再生を再試行する。
   setTimeout(() => {
-    if (state.source !== src || !state.playing) return;
-    const advanced = ac.currentTime - startedCtxTime;
-    if (ac.state !== "running" || advanced < 0.05) armAudioRecovery(`after start: state=${ac.state} advanced=${advanced.toFixed(3)}s`);
+    if (!state.playing || state.demo) return;
+    const advanced = music.currentTime - startedAt;
+    if (music.paused || advanced < 0.05) armAudioRecovery(`after start: paused=${music.paused} advanced=${advanced.toFixed(3)}s`);
     else { audio.blocked = false; diagNote(`audio ok: advanced ${advanced.toFixed(3)}s`); }
   }, 700);
   // 再生開始位置より前の Intent は捨てる
   state.lastT = state.offset;
 }
 function stop() {
-  if (state.source) { try { state.source.stop(); } catch (_) {} state.source.disconnect(); state.source = null; }
   if (state.playing) state.offset = now();
-  state.playing = false; updatePlayButton();
+  state.source = null;
+  state.playing = false;
+  if (!state.demo) music.pause();
+  updatePlayButton();
 }
 function seedActivePoints(t) {
   if (!state.intents) return;
   for (const d of state.intents.discrete) if (d.intent === "point" && d.srcInstrument !== "bass" && d.t <= t && t < d.t + d.dur) { ink.receive(d, t); rig.receive(d, t); }
 }
-function seek(t) { const was = state.playing; stop(); state.offset = Math.max(0, Math.min(duration(), t)); ink.reset(); rig.reset(); rig.pointMode = !!state.intents?.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass"); seedActivePoints(state.offset); state.lastT = state.offset; if (was) play(); drawTimeline(); }
+function seek(t) {
+  const was = state.playing;
+  const target = Math.max(0, Math.min(duration(), t));
+  if (state.demo) { if (was) stop(); }
+  state.offset = target; state.musicClockTime = target; state.musicClockPerf = performance.now();
+  if (!state.demo) music.currentTime = target;
+  ink.reset(); rig.reset(); rig.pointMode = !!state.intents?.discrete.some((d) => d.intent === "point" && d.srcInstrument !== "bass"); seedActivePoints(target); state.lastT = target;
+  if (was && state.demo) play();
+  drawTimeline();
+}
 $("btnPlay").addEventListener("click", () => (state.playing ? stop() : play()));
+$("audition").addEventListener("change", (e) => { if (e.target.checked) { const ac = ctx(); ac.resume().catch(() => {}); } });
 window.addEventListener("keydown", (e) => { if (e.code === "Space" && !["INPUT", "SELECT", "BUTTON", "TEXTAREA", "SUMMARY"].includes(document.activeElement.tagName)) { e.preventDefault(); state.playing ? stop() : play(); } });
 window.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.focus) setFocus(false); });
 $("btnNextEvent").addEventListener("click", () => {
@@ -290,29 +322,41 @@ function updateDiag() {
   const ac = state.audioCtx, ua = navigator.userAgent;
   diag.el.textContent = [
     `v${VERSION}  ${/Safari/.test(ua) && !/Chrome|Chromium|CriOS/.test(ua) ? "Safari" : "other browser"}  ${ua.slice(0, 60)}`,
-    `audioCtx: ${ac ? ac.state : "(まだ作られていない)"}  currentTime=${ac ? ac.currentTime.toFixed(2) : "-"}  sampleRate=${ac ? ac.sampleRate : "-"}  age=${ac ? ((performance.now() - audio.ctxCreatedMs) / 1000).toFixed(0) + "s" : "-"}  built=${audio.ctxCount}`,
-    `playing=${state.playing} demo=${state.demo} offset=${state.offset.toFixed(2)} now=${now().toFixed(2)} source=${!!state.source} buffer=${state.buffer ? state.buffer.duration.toFixed(1) + "s" : "-"} file=${state.fileName || "-"}`,
+    `audioCtx: ${ac ? ac.state : "(まだ作られていない)"}  currentTime=${ac ? ac.currentTime.toFixed(2) : "-"}  sampleRate=${ac ? ac.sampleRate : "-"}  built=${audio.ctxCount}`,
+    `music: paused=${music.paused} currentTime=${music.currentTime.toFixed(2)} readyState=${music.readyState} networkState=${music.networkState} error=${music.error?.code || "-"} muted=${music.muted} volume=${music.volume}`,
+    `playing=${state.playing} demo=${state.demo} offset=${state.offset.toFixed(2)} now=${now().toFixed(2)} buffer=${state.buffer ? state.buffer.duration.toFixed(1) + "s" : "-"} file=${state.fileName || "-"}`,
     `blocked=${audio.blocked}  status: ${$("topStatus").textContent}`,
     `lastError: ${diag.lastError || "-"}`,
     ...diag.log,
   ].join("\n");
 }
-const audio = { blocked: false, armed: false, ctxCreatedMs: 0, ctxCount: 0, rebuildAfterMs: 10 * 60 * 1000 };
+const audio = { blocked: false, armed: false, ctxCreatedMs: 0, ctxCount: 0 };
 window.otoAtari.audio = audio;
-/** AudioContext を作り直す（古いものは閉じる）。再生中なら同じ位置から再開する。ユーザー操作の中で呼ぶと Safari の解錠も兼ねる。 */
-function rebuildAudio(reason, { restart = true } = {}) {
+/** 合図音と復号用の AudioContext だけを作り直す。曲の出力は music 要素のまま。 */
+function rebuildAudio(reason) {
   const old = state.audioCtx;
-  const at = hasPlayback() && !state.demo ? now() : state.offset, was = state.playing && !state.demo;
-  if (was) stop();
   if (old) { state.audioCtx = null; try { old.close().catch(() => {}); } catch (_) {} }
   diagNote(`audio rebuilt (${reason})`);
-  const ac = ctx();
-  if (!state.demo) state.offset = at;
-  if (was && restart) play().then(() => { if (state.playing) setStatus("音を出し直しました"); });
-  return ac;
+  return ctx();
 }
-$("btnAudioReset").addEventListener("click", () => { if (state.demo || !state.buffer) { setStatus("音源を読み込んでから押してください"); return; } audio.blocked = false; rebuildAudio("button"); if (!state.playing) setStatus("音を出し直しました。▶ で再生します"); });
-/** 音源時計が進まない時（Safari の自動再生制限・出力先の切替など）、次のタップ／キーで AudioContext を起こし、同じ位置から再生し直す。 */
+$("btnAudioReset").addEventListener("click", () => { if (state.demo || !state.buffer) { setStatus("音源を読み込んでから押してください"); return; } resetMusicOutput(); });
+function resetMusicOutput() {
+  const at = now(), was = state.playing;
+  state.playing = false; state.offset = at;
+  music.pause();
+  rebuildAudio("music reset button");
+  let restored = false;
+  const restore = () => {
+    if (restored) return; restored = true;
+    music.removeEventListener("loadedmetadata", restore);
+    music.currentTime = Math.min(at, duration()); state.musicClockTime = music.currentTime; state.musicClockPerf = performance.now();
+    if (was) play(); else updatePlayButton();
+    setStatus(was ? "音を出し直しました" : "音を出し直しました。▶ で再生します");
+  };
+  music.addEventListener("loadedmetadata", restore, { once: true }); music.load();
+  setTimeout(restore, 300); // 同じBlob URLが既にmetadataを持つブラウザにも対応する。
+}
+/** 音源時計が進まない時、次のタップ／キーで同じ要素の再生を再試行する。 */
 function armAudioRecovery(reason) {
   audio.blocked = true;
   diagNote("blocked: " + reason);
@@ -322,13 +366,9 @@ function armAudioRecovery(reason) {
   const once = () => {
     for (const ev of ["pointerdown", "keydown", "touchend"]) document.removeEventListener(ev, once, true);
     audio.armed = false;
-    if (!state.audioCtx) return;
-    // ユーザー操作と同じ呼び出しの中で AudioContext を作り直す（古い出力先に縛られたものを捨てる）＋無音1サンプルの再生（Safari の解錠）
-    const at = now(); stop(); state.offset = at;
-    const ac = rebuildAudio("gesture after blocked", { restart: false });
-    try { ac.resume().catch(() => {}); const s = ac.createBufferSource(); s.buffer = ac.createBuffer(1, 1, ac.sampleRate); s.connect(ac.destination); s.start(0); } catch (_) {}
-    diagNote("gesture → new context, state=" + ac.state);
-    play().then(() => { if (state.playing && ac.state === "running") setStatus("再開しました"); });
+    if (state.demo || !state.buffer) return;
+    // play() はこのユーザー操作の呼び出しスタック内で music.play() を呼ぶ。
+    state.playing = false; play().then(() => { if (state.playing) setStatus("再開しました"); });
   };
   for (const ev of ["pointerdown", "keydown", "touchend"]) document.addEventListener(ev, once, true);
 }
@@ -388,7 +428,7 @@ function scheduleAudition(it, t) {
   for (const d of discreteBetween(it, from, to)) {
     if (d.intent !== "splat") continue;
     const key = `${d.t}|${d.ruleId}`; if (auditionScheduled.has(key)) continue; auditionScheduled.add(key);
-    const when = state.startedAt + (d.t - state.offset) - ((parseFloat($("latencyMs").value) || 0) / 1000);
+    const when = ac.currentTime + (d.t - now()) - ((parseFloat($("latencyMs").value) || 0) / 1000);
     if (when < ac.currentTime - 0.01) continue;
     const osc = ac.createOscillator(), g = ac.createGain();
     osc.type = "square"; osc.frequency.value = d.srcPattern ? 3200 : (d.zone === "low" || d.zone === "floor" ? 1200 : 2400);
@@ -473,9 +513,9 @@ window.addEventListener("resize", drawTimeline);
 // ---------- 入力 ----------
 async function loadSample({ autoplay = false } = {}) {
   if (ui.sourceBusy) return;
-  // Safari対策: AudioContextの生成・resume()はユーザー操作から同期的に呼ばないと
-  // 「無音のまま一時停止状態で固まる」ことがある。await の手前で必ず先に呼ぶ。
-  ctx();
+  clearFileSet();
+  // 自動再生用の解錠は、待機するfetchより前のユーザー操作中に行う。
+  if (autoplay) unlockMusicElement();
   setSourceBusy(true);
   try {
     setStatus("サンプル曲を読み込み中…");
@@ -497,7 +537,7 @@ $("btnSample").addEventListener("click", () => loadSample());
 $("btnDemoMusic").addEventListener("click", () => loadSample({ autoplay: true }));
 $("btnLightDemo").addEventListener("click", () => startLightDemo());
 $("btnPianoSample").addEventListener("click", async () => {
-  ctx();
+  clearFileSet();
   setSourceBusy(true);
   try {
     setStatus("B曲のピアノ候補を読み込み中…");
@@ -515,19 +555,70 @@ $("btnPianoSample").addEventListener("click", async () => {
   } catch (err) { setStatus("B曲の読み込みに失敗: " + err.message); }
   finally { setSourceBusy(false); }
 });
-$("fileAudio").addEventListener("change", async (e) => {
-  ctx(); // 同上（Safari対策）
-  const f = e.target.files[0]; if (!f) return;
+// 2026-10-08（TOKEN_SHEET §45）: 「音源ファイル…」は複数選択できる。mp3 と同じ名前の解析JSONを一緒に選ぶ（⌘クリック）か、
+// Finder からまとめてドラッグすると組にして読み込む。2曲（または2種類）以上なら「読み込んだ曲」の一覧で切り替える。
+$("fileAudio").addEventListener("change", (e) => {
+  const files = [...e.target.files]; e.target.value = "";   // 同じファイルをもう一度選んでも読み込めるように
+  if (files.length) loadSourceFiles(files);
+});
+async function loadSourceFiles(files) {
+  if (ui.sourceBusy) return;
+  const { songs, jsonOnly } = pairFiles(files);
+  if (!songs.length) {
+    if (jsonOnly.length) { try { setFeatures(JSON.parse(await jsonOnly[0].text())); } catch (err) { setStatus("JSONを読めません: " + err.message); } return; }
+    setStatus("音源（mp3 など）が見つかりません。フォルダではなく中のファイルを選んでください"); return;
+  }
+  state.fileSet = songs;
+  const sel = $("songSelect"); sel.replaceChildren(...songs.map((s, i) => new Option(s.label, String(i))));
+  $("songRow").hidden = songs.length < 2;
+  await loadSong(0);
+}
+function clearFileSet() { state.fileSet = null; $("songRow").hidden = true; $("songSelect").replaceChildren(); }
+async function loadSong(i) {
+  const s = state.fileSet && state.fileSet[i]; if (!s) return;
+  $("songSelect").value = String(i);
   setSourceBusy(true);
   try {
-    setStatus(`${f.name} を読み込み中…`);
-    await loadAudio(await f.arrayBuffer(), f.name);
-    await analyzeInBrowser();
-    setStatus(`${f.name} — 解析が完了しました`);
+    setStatus(`${s.audio.name} を読み込み中…`);
+    await loadAudio(await s.audio.arrayBuffer(), s.audio.name);
+    let ft = null, why = "";
+    if (s.json) {
+      try {
+        const cand = JSON.parse(await s.json.text());
+        if (validateFeatureTimeline(cand).length) why = "形式が合わない";
+        else if (Math.abs(cand.source.durationSec - state.buffer.duration) > 1.0) why = `長さが音源と違う（${fmt(cand.source.durationSec)}／${fmt(state.buffer.duration)}）`;
+        else ft = cand;
+      } catch (_) { why = "読めない"; }
+    }
+    if (ft) { setFeatures(ft); setStatus(`${s.audio.name} ＋ ${s.json.name} を読み込みました`); }
+    else {
+      await analyzeInBrowser();
+      setStatus(s.json ? `${s.json.name} は${why}ので使わず、ブラウザで解析しました` : `${s.audio.name} — 同じ名前の解析JSONが無いので、ブラウザで解析しました`);
+    }
     showLoadedPreview();
   } catch (err) { setStatus("音源を読み込めません: " + err.message); }
   finally { setSourceBusy(false); }
-});
+}
+$("songSelect").addEventListener("change", (e) => { ctx(); loadSong(Number(e.target.value)); });
+// Finder からのドラッグ（ページのどこに落としてもよい）。フォルダは読めないので中のファイルを選んでもらう。
+{
+  let depth = 0, before = "";
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  const end = () => { depth = 0; document.body.classList.remove("dropping"); };
+  window.addEventListener("dragenter", (e) => {
+    if (!hasFiles(e)) return; e.preventDefault();
+    if (depth++ === 0) { before = $("topStatus").textContent; document.body.classList.add("dropping"); setStatus("離すと読み込みます（同じ名前の解析JSONは組にします）"); }
+  });
+  window.addEventListener("dragover", (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } });
+  window.addEventListener("dragleave", (e) => { if (!hasFiles(e)) return; if (--depth <= 0) { end(); setStatus(before); } });
+  window.addEventListener("drop", (e) => {
+    if (!hasFiles(e)) return; e.preventDefault(); end();
+    if (ui.sourceBusy) { setStatus(before); return; }
+    const items = [...(e.dataTransfer.items || [])];
+    if (items.some((it) => it.webkitGetAsEntry && it.webkitGetAsEntry()?.isDirectory)) { setStatus("フォルダは読めません。フォルダを開いて、中のファイルをまとめてドラッグしてください"); return; }
+    loadSourceFiles([...e.dataTransfer.files]);
+  });
+}
 $("fileFeatures").addEventListener("change", async (e) => { const f = e.target.files[0]; if (!f) return; try { setFeatures(JSON.parse(await f.text())); } catch (err) { alert("JSONを読めません: " + err.message); } });
 $("presetSelect").addEventListener("change", (e) => loadPreset(e.target.value));
 $("fileMapping").addEventListener("change", async (e) => { const f = e.target.files[0]; if (!f) return; try { setMapping(JSON.parse(await f.text())); } catch (err) { alert("JSONを読めません: " + err.message); } });
@@ -601,7 +692,7 @@ function showLoadedPreview() {
 }
 function setSourceBusy(busy) {
   ui.sourceBusy = busy;
-  for (const id of ["btnSample", "btnPianoSample", "btnLightDemo", "btnDemoMusic", "fileAudio"]) $(id).disabled = busy;
+  for (const id of ["btnSample", "btnPianoSample", "btnLightDemo", "btnDemoMusic", "fileAudio", "songSelect"]) $(id).disabled = busy;
   $("fileFeatures").disabled = busy || state.demo;
   $("btnDemoMusic").textContent = busy ? "読込中…" : "音楽も再生";
   $("panelSource").setAttribute("aria-busy", String(busy));
@@ -660,6 +751,7 @@ function setStatus(s) { $("topStatus").textContent = s; $("topStatus").title = s
 function showProgress(p, text) { $("progress").hidden = false; $("progressBar").style.width = `${Math.round(p * 100)}%`; $("progressText").textContent = text; }
 async function startLightDemo() {
   if (ui.sourceBusy) return;
+  clearFileSet();
   stop();
   state.demo = true; state.buffer = null; state.mono = null; state.stereo = null; state.sideLayer = null;
   state.ft = createDemoFeatures(); state.ftBase = null; state.intents = null;

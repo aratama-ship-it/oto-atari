@@ -5,11 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#141416">
 <title>音アタリ — 楽曲を解析して、塗料と照明に割り振る</title>
-<link rel="stylesheet" href="style.css?v=20261008a">
+<link rel="stylesheet" href="style.css?v=20261008b">
 </head>
 <body>
+  <audio id="music" preload="auto" hidden></audio>
 <header class="top">
-  <div class="brand"><span class="name">音アタリ</span><span class="ver" id="version">v0.7.10</span></div>
+  <div class="brand"><span class="name">音アタリ</span><span class="ver" id="version">v0.7.11</span></div>
   <div class="top-status" id="topStatus" role="status">音源を読み込んでください</div>
   <nav class="views" role="tablist" aria-label="表示">
     <button class="view active" data-view="stage3d" role="tab" aria-selected="true">舞台</button>
@@ -35,8 +36,10 @@
         <button id="btnSample" class="primary">サンプル曲を読み込む</button>
         <button id="btnLightDemo" type="button">光だけのデモに戻る</button>
         <button id="btnPianoSample">B曲・ピアノ単音を読み込む</button>
-        <label class="file">音源ファイル…<input type="file" id="fileAudio" accept="audio/*"></label>
+        <label class="file">音源ファイル…<input type="file" id="fileAudio" accept="audio/*,.json,application/json" multiple></label>
       </div>
+      <p class="hint" id="pairHint">同じ名前の解析JSON（<span class="mono">曲名.stem.features.json</span> など）を ⌘クリックで一緒に選ぶか、Finder からまとめてドラッグすると、組にして読み込みます。</p>
+      <div class="row small" id="songRow" hidden><label for="songSelect" class="sub">読み込んだ曲</label><select id="songSelect"></select></div>
       <p class="hint" id="pianoNotice" hidden>B曲の493音はモデルが推定した候補です。左＝低音、右＝高音。光の大きさと明るさには原曲全体の相対音量を30％加えています。和音内の各音の実音量や元MIDIのベロシティではありません。音抜けの改善は今後の課題です。</p>
       <div class="row small">
         <label class="file">解析JSON（Python版）…<input type="file" id="fileFeatures" accept="application/json"></label>
@@ -134,11 +137,11 @@
   <div class="tempo mono" id="tempoBox">— BPM</div>
 </footer>
 
-<script src="vendor/gamma/rig-engine.js?v=20261008a"></script>
-<script src="vendor/gamma/stage-fixture-body.js?v=20261008a"></script>
-<script src="vendor/gamma/stage-lighting-plan-overlay.js?v=20261008a"></script>
-<script src="vendor/gamma/gamma-light-cue-overlay.js?v=20261008a"></script>
-<script src="vendor/gamma/stage-light-render.js?v=20261008a"></script>
-<script type="module" src="app.js?v=20261008a"></script>
+<script src="vendor/gamma/rig-engine.js?v=20261008b"></script>
+<script src="vendor/gamma/stage-fixture-body.js?v=20261008b"></script>
+<script src="vendor/gamma/stage-lighting-plan-overlay.js?v=20261008b"></script>
+<script src="vendor/gamma/gamma-light-cue-overlay.js?v=20261008b"></script>
+<script src="vendor/gamma/stage-light-render.js?v=20261008b"></script>
+<script type="module" src="app.js?v=20261008b"></script>
 </body>
 </html>

@@ -220,3 +220,8 @@ label.num { max-width: 100%; }
   .phone-layout .time { display: grid; grid-template-columns: max-content 1fr; gap: 0 var(--s1); }
   .phone-layout #tNow { grid-column: 1 / -1; }
 }
+
+/* 2026-10-08 §45: Finder からドラッグ中は画面の縁に点線（どこに落としてもよい） */
+body.dropping::after { content: ""; position: fixed; inset: var(--s1); border: 2px dashed var(--accent); border-radius: var(--r-m); pointer-events: none; z-index: 1000; }
+#songRow { align-items: center; gap: var(--s2); }
+#songRow select { flex: 1; min-width: 0; min-height: var(--touch); }
