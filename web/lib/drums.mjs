@@ -52,7 +52,7 @@ export function detectDrums(stft, hopSec, { sampleRate, sensitivity = 3, stereo 
   const [lowLo, lowHi] = binRange(40, 2000, hzPerBin, bins);
   const eKick = bandEnergy(mags, kLo, kHi), eBody = bandEnergy(mags, bodyLo, bodyHi), eWire = bandEnergy(mags, wireLo, wireHi), eHat = bandEnergy(mags, hatLo, hatHi), eLow = bandEnergy(mags, lowLo, lowHi);
   const lKick = Float32Array.from(eKick, dB), lBody = Float32Array.from(eBody, dB), lWire = Float32Array.from(eWire, dB), lHat = Float32Array.from(eHat, dB), lLow = Float32Array.from(eLow, dB);
-  const floorKick = percentile(lKick, 20), floorHat = percentile(lHat, 20), floorWire = percentile(lWire, 20);
+  const floorKick = percentile(lKick, 20), hatLoud95 = percentile(lHat, 95), floorWire = percentile(lWire, 20);
 
   // ---- kick
   // 2026-10-08（TOKEN_SHEET §44）: 40〜120Hz に加えて、高めに鳴るキックの胴（100〜180Hz）も見る。サブベースが 40〜120Hz を埋める曲や
@@ -133,13 +133,22 @@ export function detectDrums(stft, hopSec, { sampleRate, sensitivity = 3, stereo 
   const hats = [];
   {
     // 各binのlog振幅が「増えた分」だけを平均する。残響で帯域全体が高いままでも次の細かい打点を拾える。
+    // 無音域の復号ノイズを対数の大きな変化として数えないよう、各周波数は曲内p95の-60dBで下支えする（TOKEN_SHEET §51）。
+    const hatBinFloors = new Float32Array(hatHi - hatLo + 1);
+    for (let k = hatLo; k <= hatHi; k++) {
+      const values = new Float32Array(mags.length);
+      for (let i = 0; i < mags.length; i++) values[i] = mags[i][k];
+      hatBinFloors[k - hatLo] = percentile(values, 95) * 1e-3;
+    }
     const flux = new Float32Array(mags.length);
-    for (let i = 1; i < mags.length; i++) { let sum = 0, count = 0; for (let k = hatLo; k <= hatHi; k++) { sum += Math.max(0, Math.log(mags[i][k] + 1e-12) - Math.log(mags[i - 1][k] + 1e-12)); count++; } flux[i] = sum / Math.max(1, count); }
+    for (let i = 1; i < mags.length; i++) { let sum = 0, count = 0; for (let k = hatLo; k <= hatHi; k++) { const floor = hatBinFloors[k - hatLo]; sum += Math.max(0, Math.log(Math.max(mags[i][k], floor)) - Math.log(Math.max(mags[i - 1][k], floor))); count++; } flux[i] = sum / Math.max(1, count); }
     const radius = fr(0.25), ref = percentile(flux, 90) || 1, minGap = fr(0.035);
     let last = -Infinity;
     for (let i = 1; i < flux.length - 1; i++) {
       let local = []; for (let j = Math.max(0, i - radius); j <= Math.min(flux.length - 1, i + radius); j++) local.push(flux[j]);
       if (flux[i] < flux[i - 1] || flux[i] < flux[i + 1] || flux[i] < percentile(local, 50) + TH.hatFluxDelta) continue;
+      // 曲内p95から45dB未満の候補は無音に近いので除く（TOKEN_SHEET §51）。曲全体で1回だけ求めた閾値を使う。
+      if (lHat[i] < hatLoud95 - 45) continue;
       if (i - last < minGap) { if (flux[i] > flux[hats[hats.length - 1]._i]) hats.pop(); else continue; }
       const tSec = i * hopSec;
       // スネア印の近傍は除く。ただし高域だけの短い音が既存スネア器へ漏れた印（胴の立ち上がりが弱い）は除外根拠にしない。

@@ -1,19 +1,19 @@
 // app.js — 曲はaudio要素、解析と任意の合図音だけはAudioContext、無音デモはperformanceを時計にする。
-import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs?v=20261008d";   // 2026-10-07: 変更したので版を付ける（スネア推定の抑止）
-import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261008d";
-import { loudBarSpans } from "./lib/mirror-ball-map.mjs?v=20261008d";
-import { detectSideLayer, addSideLayerEvents } from "./lib/guitar-side.mjs?v=20261008d";
-import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261008d";
-import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261008d";
-import { pairFiles } from "./lib/file-pairing.mjs?v=20261008d";   // 2026-10-08: 同じ名前の音源と解析JSONを組にする（TOKEN_SHEET §45）
-import { lowPitchCurve } from "./lib/low-pitch.mjs?v=20261008d";
+import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs?v=20261008e";   // 2026-10-07: 変更したので版を付ける（スネア推定の抑止）
+import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261008e";
+import { loudBarSpans } from "./lib/mirror-ball-map.mjs?v=20261008e";
+import { detectSideLayer, addSideLayerEvents } from "./lib/guitar-side.mjs?v=20261008e";
+import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261008e";
+import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261008e";
+import { pairFiles } from "./lib/file-pairing.mjs?v=20261008e";   // 2026-10-08: 同じ名前の音源と解析JSONを組にする（TOKEN_SHEET §45）
+import { lowPitchCurve } from "./lib/low-pitch.mjs?v=20261008e";
 import { InkRenderer } from "./renderers/ink.mjs";
 import { RigRenderer } from "./renderers/rig.mjs";
-import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261008d";
-import { collectExperienceData } from "./renderers/experience.mjs?v=20261008d";
+import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261008e";
+import { collectExperienceData } from "./renderers/experience.mjs?v=20261008e";
 import { buildGammaDraft, detectTemplate } from "./renderers/gamma-export.mjs";
 
-const VERSION = "0.7.13";
+const VERSION = "0.7.14";
 const $ = (id) => document.getElementById(id);
 const state = {
   audioCtx: null, buffer: null, source: null, offset: 0, playing: false,
