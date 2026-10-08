@@ -95,6 +95,8 @@ export function collectExperienceData(discrete = [], events = [], { beats = null
   for (const h of hits) if (h.tag === "guitar") h.n = nGuitar++;
   // ハットの LED 割当: 小節ごとの刻み N を先読みで決め、表／裏／3連／16分のスロットをバー番号へ写す
   const hatHits = hits.filter((h) => h.tag === "hat");
+  let previousHat = null;
+  for (const h of hatHits) { h.windowSec = previousHat === null ? DRUM_WINDOW.hat : clamp(Math.min(DRUM_WINDOW.hat, (h.t - previousHat) * 0.9), 0.08, DRUM_WINDOW.hat); previousHat = h.t; }
   const usable = beats && beats.length >= 2;
   const cls = classifyHatPatterns(hatHits.map((h) => h.t), usable ? beats : null);
   const sectionIndexAt = (t) => { let k = 0; for (let i = 0; i < sections.length; i++) if (sections[i].start <= t) k = i; return k; };

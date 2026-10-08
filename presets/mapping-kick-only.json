@@ -117,6 +117,7 @@
     {
       "id": "hat-splat",
       "enabled": false,
+      "limit": { "maxPerSec": 32 },
       "on": {
         "event": "onset",
         "tags": [

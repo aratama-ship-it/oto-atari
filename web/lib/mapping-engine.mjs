@@ -79,6 +79,8 @@ export function compileIntents(ft, mapping, { limits } = {}) {
     if (!sourceCurves.length || sourceCurves.some((curve) => !Array.isArray(curve))) continue;
     // 複数の帯域は各フレームで大きい方を採る。曲内正規化も、この合成済みの元曲線を基準にする。
     const src = Float32Array.from({ length: frames }, (_, i) => Math.max(...sourceCurves.map((curve) => Number(curve[i]) || 0)));
+    // 前面LEDは、曲内正規化の前にキック由来の短い山と808型の同音程の尾を除く（TOKEN_SHEET §49）。
+    if (emit.intent === "footlight" && emit.kickReject) applyKickReject(src, ft, emit.kickReject);
     if (emit.normalize === "song") normalizeSong(src);
     const levelSpec = emit.level !== undefined ? emit.level : { from: "value" };
     const values = new Float32Array(frames);
@@ -118,6 +120,29 @@ function normalizeSong(values) {
   };
   const lo = percentile(0.60), hi = percentile(0.98), span = Math.max(0.02, hi - lo);
   for (let i = 0; i < values.length; i++) values[i] = clamp01((values[i] - lo) / span);
+}
+
+function applyKickReject(values, ft, spec) {
+  const { openSec, duckSec, pitchGateSec, pitchTolSt } = spec;
+  const hop = ft.clock.hopSec, n = values.length, win = Math.max(1, Math.round(openSec / hop));
+  // morphological opening = 最小→最大。短いキックの山を削り、持続するベースを残す。
+  const eroded = new Float32Array(n), opened = new Float32Array(n);
+  for (let i = 0; i < n; i++) { let m = Infinity; for (let j = Math.max(0, i - win + 1); j <= i; j++) m = Math.min(m, values[j]); eroded[i] = m; }
+  for (let i = 0; i < n; i++) { let m = 0; for (let j = Math.max(0, i - win + 1); j <= i; j++) m = Math.max(m, eroded[j]); opened[i] = m; }
+  values.set(opened);
+  const kicks = (ft.events || []).filter((e) => e.type === "onset" && (e.tags || []).some((tag) => (typeof tag === "string" ? tag : tag.name) === "kick"));
+  for (const kick of kicks) {
+    const i0 = Math.max(0, Math.round(kick.t / hop)), beforeA = Math.max(0, i0 - Math.ceil(0.04 / hop)), beforeB = Math.max(0, i0 - Math.ceil(0.03 / hop));
+    let baseline = 0, count = 0; for (let i = beforeA; i <= beforeB; i++) { baseline += values[i]; count++; } baseline /= Math.max(1, count);
+    for (let i = i0; i < Math.min(n, i0 + Math.ceil(duckSec / hop)); i++) values[i] = Math.min(values[i], baseline);
+  }
+  const pitch = ft.curves && ft.curves["low.pitch"];
+  if (!Array.isArray(pitch) || pitch.length !== n) return;
+  const samples = [];
+  for (const kick of kicks) for (let i = Math.max(0, Math.ceil((kick.t + 0.06) / hop)); i <= Math.min(n - 1, Math.floor((kick.t + 0.14) / hop)); i++) if (Number.isFinite(pitch[i]) && pitch[i] !== -99) samples.push(pitch[i]);
+  if (!samples.length) return;
+  samples.sort((a, b) => a - b); const kickPitch = samples[Math.floor(samples.length / 2)];
+  for (const kick of kicks) for (let i = Math.max(0, Math.round(kick.t / hop)); i < Math.min(n, Math.ceil((kick.t + pitchGateSec) / hop)); i++) if (pitch[i] !== -99 && Number.isFinite(pitch[i]) && Math.abs(pitch[i] - kickPitch) <= pitchTolSt) values[i] = 0;
 }
 
 /** 再生時の問い合わせ: [t0, t1) の離散 Intent。二分探索。 */

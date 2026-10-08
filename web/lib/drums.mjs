@@ -37,7 +37,8 @@ function risePeaks(logE, { riseFrames, minRiseDb, minGapFrames, radius }) {
 export function thresholdsFor(sensitivity = 3) {
   const k = Math.max(1, Math.min(5, Number(sensitivity) || 3));
   const f = 1 - (k - 3) * 0.25;           // 1→1.5倍厳しい … 5→0.5倍ゆるい
-  return { kickRise: 6 * f, kickDecay: 6 * f, kickFloor: 12 * f, snareBodyRise: 5 * f, snareWireRise: 4 * f, snareDecay: 4 * f, hatRise: 4 * f, hatFloor: 8 * f, hatLowRise: 4 / f };
+  const hatFluxDelta = k <= 1 ? 0.3 : k >= 5 ? 0.1 : 0.2;
+  return { kickRise: 6 * f, kickDecay: 6 * f, kickFloor: 12 * f, snareBodyRise: 5 * f, snareWireRise: 4 * f, snareDecay: 4 * f, hatRise: 4 * f, hatFloor: 8 * f, hatLowRise: 4 / f, hatFluxDelta };
 }
 
 export function detectDrums(stft, hopSec, { sampleRate, sensitivity = 3, stereo = null, beats = null, reinforce = true } = {}) {
@@ -131,17 +132,22 @@ export function detectDrums(stft, hopSec, { sampleRate, sensitivity = 3, stereo 
   // ---- hat
   const hats = [];
   {
-    const { peaks, rise } = risePeaks(lHat, { riseFrames: fr(0.02), minRiseDb: TH.hatRise, minGapFrames: fr(0.06), radius: fr(0.25) });
-    const ref = percentile(peaks.map((i) => rise[i]), 90) || 1;
-    for (const i of peaks) {
-      if (lHat[i] - floorHat < TH.hatFloor) continue;
-      const lowRise = Math.max(0, lLow[i] - lLow[Math.max(0, i - fr(0.02))]);
-      if (lowRise > TH.hatLowRise) continue;                                            // 低域も一緒に立ち上がる＝キック/スネアの付帯音
+    // 各binのlog振幅が「増えた分」だけを平均する。残響で帯域全体が高いままでも次の細かい打点を拾える。
+    const flux = new Float32Array(mags.length);
+    for (let i = 1; i < mags.length; i++) { let sum = 0, count = 0; for (let k = hatLo; k <= hatHi; k++) { sum += Math.max(0, Math.log(mags[i][k] + 1e-12) - Math.log(mags[i - 1][k] + 1e-12)); count++; } flux[i] = sum / Math.max(1, count); }
+    const radius = fr(0.25), ref = percentile(flux, 90) || 1, minGap = fr(0.035);
+    let last = -Infinity;
+    for (let i = 1; i < flux.length - 1; i++) {
+      let local = []; for (let j = Math.max(0, i - radius); j <= Math.min(flux.length - 1, i + radius); j++) local.push(flux[j]);
+      if (flux[i] < flux[i - 1] || flux[i] < flux[i + 1] || flux[i] < percentile(local, 50) + TH.hatFluxDelta) continue;
+      if (i - last < minGap) { if (flux[i] > flux[hats[hats.length - 1]._i]) hats.pop(); else continue; }
       const tSec = i * hopSec;
-      if (lowKicks.some((k) => Math.abs(k.t - tSec) <= 0.03) || snares.some((k) => Math.abs(k.t - tSec) <= 0.03)) continue;
-      const strength = Math.min(1, rise[i] / ref);
-      hats.push({ t: round3(i * hopSec), strength: round3(strength), confidence: round3(Math.min(0.85, 0.35 + 0.25 * strength + 0.25 * Math.min(1, (4 - lowRise) / 4))), pan: panAt(stereo, i * hopSec, 7000, 16000), detail: { riseDb: round1(rise[i]), lowRiseDb: round1(lowRise) } });
+      // スネア印の近傍は除く。ただし高域だけの短い音が既存スネア器へ漏れた印（胴の立ち上がりが弱い）は除外根拠にしない。
+      if (snares.some((s) => Math.abs(s.t - tSec) <= 0.025 && (s.detail?.bodyRiseDb ?? 0) >= 30)) continue;
+      const strength = Math.min(1, flux[i] / ref);
+      hats.push({ _i: i, t: round3(tSec), strength: round3(strength), confidence: round3(Math.min(0.85, 0.35 + 0.25 * strength + 0.25 * Math.min(1, flux[i] / (TH.hatFluxDelta * 3)))), pan: panAt(stereo, tSec, 7000, 16000), detail: { flux: round1(flux[i]) } }); last = i;
     }
+    for (const h of hats) delete h._i;
   }
   // ---- kick の規則性で拾い漏れを補完（例: 四つ打ち＝毎拍キック）。スネア／クラップ判定の後に行い、重なりを見送りの根拠に使う。
   const patternGrid = reinforce ? reinforceKicksByGrid(kicks, lKick, floorKick, hopSec, beats, TH, stereo, snares) : { applied: false, reason: "disabled" };

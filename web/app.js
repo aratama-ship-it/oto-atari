@@ -1,18 +1,19 @@
 // app.js — 曲はaudio要素、解析と任意の合図音だけはAudioContext、無音デモはperformanceを時計にする。
-import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs?v=20261008c";   // 2026-10-07: 変更したので版を付ける（スネア推定の抑止）
-import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261008c";
-import { loudBarSpans } from "./lib/mirror-ball-map.mjs?v=20261008c";
-import { detectSideLayer, addSideLayerEvents } from "./lib/guitar-side.mjs?v=20261008c";
-import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261008c";
-import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261008c";
-import { pairFiles } from "./lib/file-pairing.mjs?v=20261008c";   // 2026-10-08: 同じ名前の音源と解析JSONを組にする（TOKEN_SHEET §45）
+import { analyzePCM, downmix, refineWithDrums } from "./lib/analyze-core.mjs?v=20261008d";   // 2026-10-07: 変更したので版を付ける（スネア推定の抑止）
+import { createDemoFeatures, DEMO_SUSTAIN_SPANS, DEMO_BASS_NOTES } from "./lib/demo.mjs?v=20261008d";
+import { loudBarSpans } from "./lib/mirror-ball-map.mjs?v=20261008d";
+import { detectSideLayer, addSideLayerEvents } from "./lib/guitar-side.mjs?v=20261008d";
+import { compileIntents, discreteBetween, continuousAt, paletteNameAt } from "./lib/mapping-engine.mjs?v=20261008d";
+import { validateFeatureTimeline, validateMapping } from "./lib/validate.mjs?v=20261008d";
+import { pairFiles } from "./lib/file-pairing.mjs?v=20261008d";   // 2026-10-08: 同じ名前の音源と解析JSONを組にする（TOKEN_SHEET §45）
+import { lowPitchCurve } from "./lib/low-pitch.mjs?v=20261008d";
 import { InkRenderer } from "./renderers/ink.mjs";
 import { RigRenderer } from "./renderers/rig.mjs";
-import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261008c";
-import { collectExperienceData } from "./renderers/experience.mjs?v=20261008c";
+import { Stage3dRenderer } from "./renderers/stage3d.mjs?v=20261008d";
+import { collectExperienceData } from "./renderers/experience.mjs?v=20261008d";
 import { buildGammaDraft, detectTemplate } from "./renderers/gamma-export.mjs";
 
-const VERSION = "0.7.12";
+const VERSION = "0.7.13";
 const $ = (id) => document.getElementById(id);
 const state = {
   audioCtx: null, buffer: null, source: null, offset: 0, playing: false,
@@ -117,6 +118,10 @@ function setFeatures(ft, { detectDrums = !ft.events?.some((e) => e.type === "not
   if (detectDrums && !ft.drums && state.mono && state.buffer && Math.abs(ft.source.durationSec - state.buffer.duration) <= 1.0) {
     setStatus("打楽器（キック／スネア／ハット）を判定中…");
     refineWithDrums(ft, state.mono, state.buffer.sampleRate, { stereo: state.stereo, sensitivity: currentSensitivity(), reinforce: currentReinforce() });
+  }
+  // JSONだけの読み込みでは推測しない。音源と同じ長さの時だけ前面LED用の低音程を足す。
+  if (!ft.curves["low.pitch"] && state.mono && state.buffer && Math.abs(ft.source.durationSec - state.buffer.duration) <= 1.0) {
+    ft.curves["low.pitch"] = lowPitchCurve(state.mono, state.buffer.sampleRate, ft.clock.hopSec, ft.clock.frames);
   }
   // 左右に振られた音（ギター想定）の打点を足す（2026-10-07・TOKEN_SHEET §36）。ステレオ音源があり、長さが合う時だけ。
   // 2026-10-07 夜: ミックスの左右差だけではクラップやピアノの広がりと区別できない（§39 の実測）ので既定オフの任意機能。解析JSONに #guitar があれば足さない。

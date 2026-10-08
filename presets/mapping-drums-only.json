@@ -152,6 +152,7 @@
     },
     {
       "id": "hat-splat",
+      "limit": { "maxPerSec": 32 },
       "on": {
         "event": "onset",
         "tags": [
@@ -208,7 +209,8 @@
       "emit": {
         "intent": "footlight",
         "zone": "front",
-        "normalize": "song"
+        "normalize": "song",
+        "kickReject": { "openSec": 0.2, "duckSec": 0.15, "pitchGateSec": 0.6, "pitchTolSt": 1 }
       },
       "note": "前面LEDはサブ／ベースの大きい方で動く"
     },

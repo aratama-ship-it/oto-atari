@@ -1,8 +1,8 @@
 // 舞台表示の投影・照明アダプタ。数値の正本: design/TOKEN_SHEET.md §13・§16〜23・§25。
 // γの幾何ブロックは _delegation/gamma-src-2026-10-01/stage-first-person.js から無改変抽出。
-import { DRUM_WINDOW } from "./experience.mjs?v=20261008c";
-import { drawVocalLaser } from "./vocal-laser.mjs?v=20261008c";
-import { spinAt, pinLevelsAt, pinColorsAt, buildSpinTrack } from "../lib/mirror-ball-map.mjs?v=20261008c";
+import { DRUM_WINDOW } from "./experience.mjs?v=20261008d";
+import { drawVocalLaser } from "./vocal-laser.mjs?v=20261008d";
+import { spinAt, pinLevelsAt, pinColorsAt, buildSpinTrack } from "../lib/mirror-ball-map.mjs?v=20261008d";
 
 const W = 12, D = 9, H = 8;
 const FIXTURE_OUTLINE_COLOR = "#808080";
@@ -391,7 +391,7 @@ export function fixtureLevelsAt(t, expData, rig, { spin01 = 0, pinColors = null 
   while (lo < hi) { const mid = (lo + hi) >> 1; if (hits[mid].t < t - DRUM_WINDOW.hat) lo = mid + 1; else hi = mid; }
   for (let i = lo; i < hits.length; i++) {
     const hit = hits[i]; if (hit.t > t) break;
-    const age = t - hit.t, window = DRUM_WINDOW[hit.tag];
+    const age = t - hit.t, window = hit.tag === "hat" && Number.isFinite(hit.windowSec) ? hit.windowSec : DRUM_WINDOW[hit.tag];
     if (!window || age < 0 || age >= window) continue;
     const strength = clamp(hit.level, 0, 1), remaining = 1 - age / window;
     const life = hit.tag === "kick" ? remaining ** 2.6 * strength

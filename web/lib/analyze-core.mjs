@@ -1,6 +1,6 @@
 // analyze-core.mjs — モノラル PCM から Feature Timeline v1 を作る（JS版・ブラウザ/Node 共用）。
 // 仕様: ../../schema/FEATURE_TIMELINE_SPEC.md。Python 版（analysis/analyze.py）と同じ形式を出す。
-import { detectDrums, mergeDrumsIntoEvents, refineGridWithDrums } from "./drums.mjs?v=20261008c";   // 2026-10-08: キック判定を変えたので版を付ける（§44）
+import { detectDrums, mergeDrumsIntoEvents, refineGridWithDrums } from "./drums.mjs?v=20261008d";   // 2026-10-08: キック判定を変えたので版を付ける（§44）
 import { stftMagnitudes, binRange, normalizeDb, clamp01, movingAverage, pickPeaks, estimateTempo, fitBeatGrid, noveltyCurve, percentile } from "./dsp.mjs";
 
 export const ANALYZER_VERSION = "0.1.0";

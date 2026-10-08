@@ -85,6 +85,7 @@ export function validateMapping(m) {
       (typeof r.emit.level.from !== "string" || typeof r.emit.level.secondaryFrom !== "string" || !in01(r.emit.level.secondaryWeight))) e.push(`rules[${i}]: level の secondaryFrom には from と0〜1の secondaryWeight が必要`);
     if (r.emit && (r.emit.intent === "wash" || r.emit.intent === "haze" || r.emit.intent === "footlight") && !(r.on && r.on.curve)) e.push(`rules[${i}]: ${r.emit.intent} は on.curve が必要`);
     if (r.emit?.intent === "footlight" && !(typeof r.on?.curve === "string" || (Array.isArray(r.on?.curve) && r.on.curve.length > 0 && r.on.curve.every((curve) => typeof curve === "string")))) e.push(`rules[${i}]: footlight の on.curve は文字列または文字列配列が必要`);
+    if (r.emit?.kickReject !== undefined) { const k = r.emit.kickReject; if (!(k && ["openSec", "duckSec", "pitchGateSec", "pitchTolSt"].every((x) => finite(k[x]) && k[x] > 0) && k.openSec <= 1 && k.duckSec <= 1 && k.pitchGateSec <= 1 && k.pitchTolSt <= 6)) e.push(`rules[${i}].emit.kickReject が不正`); }
     if (r.emit?.normalize !== undefined && r.emit.normalize !== "song") e.push(`rules[${i}].emit.normalize は song のみ`);
     if (r.emit && r.emit.intent === "palette" && !(r.emit.name || (r.emit.cycle && r.emit.cycle.length))) e.push(`rules[${i}]: palette は name か cycle が必要`);
     if (r.quantize && !["none", "beat", "half", "bar"].includes(r.quantize.to)) e.push(`rules[${i}].quantize.to が不正`);
