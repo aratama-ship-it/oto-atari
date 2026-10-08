@@ -8,6 +8,9 @@ import { binRange, movingAverage, percentile, fft as fftInPlace } from "./dsp.mj
 
 const dB = (e) => 10 * Math.log10(e + 1e-12);
 
+/** 高めに鳴るキックの帯域（TOKEN_SHEET §44・2026-10-08）。上帯域の候補にだけ掛ける3条件は感度で動かさない。 */
+export const KICK_UPPER = { hz: [100, 180], lowRiseDb: 2, lowDecayDb: 1, wireDensityRelDb: -20 };
+
 function bandEnergy(mags, lo, hi) {
   const out = new Float32Array(mags.length);
   for (let f = 0; f < mags.length; f++) { const m = mags[f]; let e = 0; for (let k = lo; k <= hi; k++) e += m[k] * m[k]; out[f] = e; }
@@ -51,23 +54,59 @@ export function detectDrums(stft, hopSec, { sampleRate, sensitivity = 3, stereo 
   const floorKick = percentile(lKick, 20), floorHat = percentile(lHat, 20), floorWire = percentile(lWire, 20);
 
   // ---- kick
+  // 2026-10-08（TOKEN_SHEET §44）: 40〜120Hz に加えて、高めに鳴るキックの胴（100〜180Hz）も見る。サブベースが 40〜120Hz を埋める曲や
+  // キックの胴が 120Hz より上にある曲（dddd の2曲ではキックの 34〜37%）では、低域だけでは立ち上がり・減衰が閾値に届かなかった
+  // （docs/research-2026-10-08-kick-bass/）。閾値を下げても戻らない＝帯域の問題。
+  // 上の帯域の候補は、スネアの胴・クラップ・ベースの頭を拾わないよう3条件を付ける（合成テストと実曲で確認）:
+  //   低域も少し上がって（2dB）200ms で少し下がる（1dB）／ 2〜8kHz の帯域あたり密度が胴より 20dB 以上低い。
   const kicks = [];
   {
-    const { peaks, rise } = risePeaks(lKick, { riseFrames: fr(0.03), minRiseDb: TH.kickRise, minGapFrames: fr(0.09), radius: fr(0.3) });
-    const riseRef = percentile(peaks.map((i) => rise[i]), 90) || 1;
-    for (const i of peaks) {
-      // ピーク（+60ms 以内の最大）と減衰（ピークから +200ms で −6dB 以上）
-      let pk = i, pkV = lKick[i];
-      for (let j = i; j <= Math.min(lKick.length - 1, i + fr(0.06)); j++) if (lKick[j] > pkV) { pkV = lKick[j]; pk = j; }
-      if (pkV - floorKick < TH.kickFloor) continue;                         // 床に近い＝無視
-      const after = lKick[Math.min(lKick.length - 1, pk + fr(0.2))];
-      const decayDb = pkV - after;
-      if (decayDb < TH.kickDecay) continue;                                 // 減衰しない＝持続音（ベース）
-      const strength = Math.min(1, rise[i] / riseRef);
-      const confidence = Math.min(0.95, 0.4 + 0.3 * Math.min(1, (decayDb - TH.kickDecay) / 12) + 0.25 * strength);
-      kicks.push({ t: round3(i * hopSec), strength: round3(strength), confidence: round3(confidence), pan: panAt(stereo, i * hopSec, 40, 120), detail: { riseDb: round1(rise[i]), decayDb: round1(decayDb), peakDb: round1(pkV - floorKick) } });
+    const [uLo, uHi] = binRange(KICK_UPPER.hz[0], KICK_UPPER.hz[1], hzPerBin, bins);
+    const lUpper = Float32Array.from(bandEnergy(mags, uLo, uHi), dB);
+    const densUpper = 10 * Math.log10(uHi - uLo + 1), densWire = 10 * Math.log10(wireHi - wireLo + 1);
+    const cands = []; let riseLow = null;
+    for (const [band, lK, upper] of [["low", lKick, false], ["upper", lUpper, true]]) {
+      const floor = upper ? percentile(lK, 20) : floorKick;
+      const { peaks, rise } = risePeaks(lK, { riseFrames: fr(0.03), minRiseDb: TH.kickRise, minGapFrames: fr(0.09), radius: fr(0.3) });
+      if (!upper) riseLow = rise;
+      const riseRef = percentile(peaks.map((i) => rise[i]), 90) || 1;
+      for (const i of peaks) {
+        // ピーク（+60ms 以内の最大）と減衰（ピークから +200ms で −6dB 以上）
+        let pk = i, pkV = lK[i];
+        for (let j = i; j <= Math.min(lK.length - 1, i + fr(0.06)); j++) if (lK[j] > pkV) { pkV = lK[j]; pk = j; }
+        if (pkV - floor < TH.kickFloor) continue;                           // 床に近い＝無視
+        const after = lK[Math.min(lK.length - 1, pk + fr(0.2))];
+        const decayDb = pkV - after;
+        if (decayDb < TH.kickDecay) continue;                               // 減衰しない＝持続音（ベース）
+        if (upper) {
+          let lr = 0; for (let j = Math.max(0, i - 2); j <= Math.min(riseLow.length - 1, i + 2); j++) lr = Math.max(lr, riseLow[j]);
+          if (lr < KICK_UPPER.lowRiseDb) continue;                          // 低域が動かない＝スネアの胴だけ
+          let p2 = i, v2 = lKick[i]; for (let j = Math.max(0, i - 2); j <= Math.min(lKick.length - 1, i + 6); j++) if (lKick[j] > v2) { v2 = lKick[j]; p2 = j; }
+          if (v2 - lKick[Math.min(lKick.length - 1, p2 + fr(0.2))] < KICK_UPPER.lowDecayDb) continue;   // 低域が下がらない＝ベースの頭
+          let vw = -Infinity; for (let j = Math.max(0, pk - 2); j <= Math.min(lWire.length - 1, pk + 2); j++) vw = Math.max(vw, lWire[j]);
+          if (vw - densWire >= pkV - densUpper + KICK_UPPER.wireDensityRelDb) continue;   // 高域の密度が胴に迫る＝クラップ・スネア
+        }
+        const strength = Math.min(1, rise[i] / riseRef);
+        const confidence = Math.min(0.95, 0.4 + 0.3 * Math.min(1, (decayDb - TH.kickDecay) / 12) + 0.25 * strength);
+        cands.push({ t: round3(i * hopSec), strength: round3(strength), confidence: round3(confidence), pan: panAt(stereo, i * hopSec, upper ? KICK_UPPER.hz[0] : 40, upper ? KICK_UPPER.hz[1] : 120), detail: { band, riseDb: round1(rise[i]), decayDb: round1(decayDb), peakDb: round1(pkV - floor) } });
+      }
+    }
+    // 2帯域の候補を 50ms で統合（同じ打点なら強い方を残す）
+    cands.sort((a, b) => a.t - b.t || b.strength - a.strength);
+    // lowEvidence: 低域（40〜120Hz）でも見つかった打点か。スネア／ハットの「キックと重なる」関門はこれだけを見る＝スネア・ハットの結果は改修前と同じ
+    // 統合の優先: 低域で見つかった打点はそのまま残す（時刻・強さ・確度とも改修前と同一）。上帯域は低域が見つけなかった打点だけ足す
+    for (const c of cands) {
+      const last = kicks[kicks.length - 1];
+      if (last && c.t - last.t <= 0.05) {
+        if (last.detail.band === "low") { last.detail.lowEvidence = true; continue; }
+        if (c.detail.band === "low") { c.detail.lowEvidence = true; kicks[kicks.length - 1] = c; continue; }
+        if (c.strength > last.strength) kicks[kicks.length - 1] = c;
+        kicks[kicks.length - 1].detail.lowEvidence = false; continue;
+      }
+      c.detail.lowEvidence = c.detail.band === "low"; kicks.push(c);
     }
   }
+  const lowKicks = kicks.filter((k) => k.detail.lowEvidence);   // 改修前のキック集合（スネア／ハットの関門用）
   // ---- kick の規則性で拾い漏れを補完（例: 四つ打ち＝毎拍キック）。
   // 「弱く鳴っている拍」を毎回ゆるい閾値で検出すると誤検出が増えるため、まず通常の閾値で確度の高いキックを
   // 十分な数取ってから、その並び自体が周期的かどうかを見て、周期が強い曲だけ・その位置だけをゆるく調べ直す。
@@ -82,7 +121,7 @@ export function detectDrums(stft, hopSec, { sampleRate, sensitivity = 3, stereo 
       let wireRise = 0; for (let j = Math.max(0, i - win); j <= Math.min(rw.length - 1, i + win); j++) wireRise = Math.max(wireRise, rw[j]);
       if (wireRise < TH.snareWireRise) continue;                            // 響き線側が立ち上がらない＝スネアでない
       if (lWire[i] - floorWire < 8) continue;
-      if (kicks.some((k) => Math.abs(k.t - i * hopSec) <= 0.03) && lWire[i] < lBody[i] - 10) continue;  // キックのアタック音（キックと重なるときは響き線が胴に匹敵する場合だけスネア）
+      if (lowKicks.some((k) => Math.abs(k.t - i * hopSec) <= 0.03) && lWire[i] < lBody[i] - 10) continue;  // キックのアタック音（キックと重なるときは響き線が胴に匹敵する場合だけスネア）。上帯域だけのキックは見ない（§44）
       const after = lBody[Math.min(lBody.length - 1, i + fr(0.25))];
       if (lBody[i] - after < TH.snareDecay) continue;                       // 減衰しない
       const strength = Math.min(1, rb[i] / ref);
@@ -99,7 +138,7 @@ export function detectDrums(stft, hopSec, { sampleRate, sensitivity = 3, stereo 
       const lowRise = Math.max(0, lLow[i] - lLow[Math.max(0, i - fr(0.02))]);
       if (lowRise > TH.hatLowRise) continue;                                            // 低域も一緒に立ち上がる＝キック/スネアの付帯音
       const tSec = i * hopSec;
-      if (kicks.some((k) => Math.abs(k.t - tSec) <= 0.03) || snares.some((k) => Math.abs(k.t - tSec) <= 0.03)) continue;
+      if (lowKicks.some((k) => Math.abs(k.t - tSec) <= 0.03) || snares.some((k) => Math.abs(k.t - tSec) <= 0.03)) continue;
       const strength = Math.min(1, rise[i] / ref);
       hats.push({ t: round3(i * hopSec), strength: round3(strength), confidence: round3(Math.min(0.85, 0.35 + 0.25 * strength + 0.25 * Math.min(1, (4 - lowRise) / 4))), pan: panAt(stereo, i * hopSec, 7000, 16000), detail: { riseDb: round1(rise[i]), lowRiseDb: round1(lowRise) } });
     }
@@ -193,7 +232,7 @@ export function mergeDrumsIntoEvents(ft, drums, { mergeSec = 0.03 } = {}) {
     for (const d of list) {
       let target = null, best = mergeSec + 1e-9;
       for (const o of onsets) { const dt = Math.abs(o.t - d.t); if (dt <= best) { best = dt; target = o; } }
-      const tag = { name, confidence: d.confidence, strength: d.strength, source: "drums-v1", ...(d.detail && d.detail.patternConfirmed ? { patternConfirmed: true } : {}) };
+      const tag = { name, confidence: d.confidence, strength: d.strength, source: "drums-v1", ...(d.detail && d.detail.patternConfirmed ? { patternConfirmed: true } : {}), ...(d.detail && d.detail.band ? { band: d.detail.band } : {}) };
       if (target) { target.tags = (target.tags || []).filter((x) => x.name !== name); target.tags.push(tag); if (d.pan !== undefined) target.pan = d.pan; }
       else {
         const ev = { t: d.t, type: "onset", strength: d.strength, band, bands: Object.fromEntries(bands.map((b) => [b.id, b.id === band ? 1 : 0])), confidence: d.confidence, tags: [tag], ...(d.pan !== undefined ? { pan: d.pan } : {}) };
